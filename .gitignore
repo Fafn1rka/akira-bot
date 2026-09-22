@@ -1,0 +1,23 @@
+# Секреты — никогда не коммитить
+.env
+
+# Память и логи — личные данные, не для репозитория
+data/
+logs/
+audio_cache/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# ОС
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
