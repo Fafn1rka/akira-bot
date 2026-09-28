@@ -24,12 +24,15 @@ fi
 
 echo
 if command -v apt-get >/dev/null 2>&1; then
-    echo "Подсказка (Debian/Ubuntu): для микрофона и звука может понадобиться:"
-    echo "    sudo apt-get install -y portaudio19-dev ffmpeg"
+    echo "Подсказка (Debian/Ubuntu/Mint): для микрофона, звука и голоса в Discord нужно:"
+    echo "    sudo apt-get install -y libportaudio2 portaudio19-dev libopus0 ffmpeg libxcb-cursor0"
+    echo "(libxcb-cursor0 нужна окну Акиры: без неё Qt пишет ошибку про плагин xcb.)"
+    echo "А для управления плеером голосом (пауза / следующий трек) — ещё:"
+    echo "    sudo apt-get install -y playerctl"
 elif command -v dnf >/dev/null 2>&1; then
-    echo "Подсказка (Fedora): sudo dnf install -y portaudio-devel ffmpeg"
+    echo "Подсказка (Fedora): sudo dnf install -y portaudio-devel opus ffmpeg playerctl"
 elif command -v pacman >/dev/null 2>&1; then
-    echo "Подсказка (Arch): sudo pacman -S portaudio ffmpeg"
+    echo "Подсказка (Arch): sudo pacman -S portaudio opus ffmpeg playerctl"
 fi
 
 echo

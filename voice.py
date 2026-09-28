@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -29,6 +30,31 @@ _LANG_VOICES = {
 
 _CYR_UK_ONLY = set("їієґ")
 _NOWIN = {"creationflags": subprocess.CREATE_NO_WINDOW} if config.IS_WINDOWS else {}
+
+# ── «Акира сейчас говорит» — микрофон (voice_listener) в это время не слушает, иначе через колонки
+#    она услышала бы сама себя. Немного «хвоста» после конца звука — на затухание эха в комнате.
+_state_lock = threading.Lock()
+_speaking_count = 0
+_tail_until = 0.0
+_ECHO_TAIL = 0.7
+
+
+def is_speaking() -> bool:
+    with _state_lock:
+        return _speaking_count > 0 or time.monotonic() < _tail_until
+
+
+def _speaking_begin() -> None:
+    global _speaking_count
+    with _state_lock:
+        _speaking_count += 1
+
+
+def _speaking_end() -> None:
+    global _speaking_count, _tail_until
+    with _state_lock:
+        _speaking_count = max(0, _speaking_count - 1)
+        _tail_until = time.monotonic() + _ECHO_TAIL
 
 
 def detect_lang(text: str) -> str:
@@ -85,6 +111,14 @@ async def synthesize(text: str, out_path: Optional[str | Path] = None,
 
 async def play_audio(path: str | Path) -> bool:
     """Проигрывает звук, не блокируя event loop. True, если удалось запустить."""
+    _speaking_begin()
+    try:
+        return await _play_audio_impl(path)
+    finally:
+        _speaking_end()
+
+
+async def _play_audio_impl(path: str | Path) -> bool:
     path = str(path)
     system_cmd = _player_command(path)
     if system_cmd:
@@ -150,12 +184,46 @@ async def _play_with_sounddevice(path: str) -> bool:
     return await asyncio.to_thread(_blocking)
 
 
+# Голос Windows (SAPI) без интернета и без установки чего-либо. Текст передаётся через переменную
+# окружения, а не внутри команды — поэтому в нём нельзя спрятать вредный код.
+_PS_SPEAK = (
+    "Add-Type -AssemblyName System.Speech; "
+    "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+    "$v = $s.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Culture.Name -like $env:AKIRA_LANG } "
+    "| Select-Object -First 1; "
+    "if ($v) { $s.SelectVoice($v.VoiceInfo.Name) }; "
+    "$s.Speak($env:AKIRA_SAY)"
+)
+
+
+async def _speak_offline_windows(text: str) -> bool:
+    """Запасной вариант, когда edge-tts не сработал (нет интернета). Только Windows."""
+    if not (config.IS_WINDOWS and config.VOICE_OFFLINE_FALLBACK):
+        return False
+    clean = _clean_for_speech(text)
+    if not clean:
+        return False
+    env = dict(os.environ, AKIRA_SAY=clean, AKIRA_LANG=detect_lang(clean) + "*")
+    _speaking_begin()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_SPEAK, env=env,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL, **_NOWIN)
+        await asyncio.wait_for(proc.wait(), timeout=60)
+        return proc.returncode == 0
+    except Exception as e:  # noqa: BLE001
+        log.info("Голос Windows не сработал: %s", e)
+        return False
+    finally:
+        _speaking_end()
+
+
 async def speak(text: str, animate: bool = True) -> bool:
     """Синтезирует и сразу проигрывает. Если animate — параллельно двигает
     персонажа на рабочем столе в такт голосу. True, если реально прозвучало."""
     mp3 = await synthesize(text)
     if not mp3:
-        return False
+        return await _speak_offline_windows(text)
     anim_task = asyncio.create_task(_animate_while(mp3)) if animate and config.ENABLE_AVATAR else None
     try:
         ok = await play_audio(mp3)

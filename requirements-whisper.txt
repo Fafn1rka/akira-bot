@@ -1,0 +1,5 @@
+# Локальное распознавание речи (без интернета, точнее, чем google). Необязательно.
+# Установка:  .venv\Scripts\pip install -r requirements-whisper.txt   (Windows)
+#             .venv/bin/pip install -r requirements-whisper.txt         (Linux/macOS)
+# Затем в .env:  STT_ENGINE=whisper   (или оставь auto — включится само)
+faster-whisper>=1.0

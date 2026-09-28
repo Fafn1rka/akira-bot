@@ -82,6 +82,21 @@ class Memory(JsonStore):
             self.save()
             return True
 
+    def merge_facts(self, src: str, dst: str) -> int:
+        """Переносит факты из src в dst (без дублей) и очищает их в src.
+        Нужно, чтобы владелец в Telegram/Discord и за компьютером стал одним человеком."""
+        with self._lock:
+            if src == dst or src not in self.data["sessions"]:
+                return 0
+            facts = list(self.session(src)["facts"])
+            if not facts:
+                return 0
+            for f in facts:
+                self.add_fact(dst, f)
+            self.session(src)["facts"] = []
+            self.save()
+            return len(facts)
+
     def clear(self, key: str, facts_too: bool = True) -> None:
         with self._lock:
             s = self.session(key)

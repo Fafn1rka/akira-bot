@@ -3,6 +3,9 @@ Telegram-бот Акиры. Отвечает видео-«кружком» (го
 или текстом — на выбор в .env (TELEGRAM_REPLY_MODE). Понимает и голосовые
 сообщения от пользователя.
 
+Понимает и файлы: фото, документы (PDF, текстовые файлы и т.д.), аудио — можно прислать сразу
+несколько (альбомом). Подпись к файлам считается вопросом. Всё это уходит модели вместе с текстом.
+
 Права доступа:
   • владелец (TELEGRAM_OWNER_ID)      — полный доступ, включая управление ПК;
   • разрешённые (TELEGRAM_ALLOWED_IDS) и все (TELEGRAM_PUBLIC=true) — обычная
@@ -21,8 +24,9 @@ from typing import Optional
 
 import config
 import media
+import stt
 import voice
-from brain import Brain
+from brain import MAX_FILE_BYTES, Brain
 
 log = logging.getLogger("akira.telegram")
 
@@ -49,6 +53,15 @@ class TelegramBot:
     def __init__(self, brain: Brain):
         self.brain = brain
         self.app: Optional["Application"] = None
+        self._albums: dict[str, dict] = {}     # media_group_id -> накопленные файлы альбома
+        self._tasks: set = set()               # ссылки на фоновые задачи (иначе их может съесть сборщик мусора)
+
+    @staticmethod
+    def _key(chat_id: int, is_owner: bool) -> str:
+        """Владелец во всех каналах — один человек с одной памятью (если SHARED_OWNER_MEMORY=true)."""
+        if is_owner and config.SHARED_OWNER_MEMORY:
+            return config.OWNER_KEY
+        return f"tg:{chat_id}"
 
     def available(self) -> bool:
         return Application is not None and bool(config.TELEGRAM_BOT_TOKEN)
@@ -60,6 +73,8 @@ class TelegramBot:
         app.add_handler(CommandHandler("reset", self._cmd_reset))
         app.add_handler(CommandHandler("mode", self._cmd_mode))
         app.add_handler(MessageHandler(filters.VOICE & filters.ChatType.PRIVATE, self._on_voice))
+        app.add_handler(MessageHandler(
+            (filters.PHOTO | filters.Document.ALL | filters.AUDIO) & filters.ChatType.PRIVATE, self._on_media))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
                                        self._on_text))
         self.app = app
@@ -80,10 +95,10 @@ class TelegramBot:
         await update.message.reply_text(f"Твой chat_id: {update.effective_chat.id}")
 
     async def _cmd_reset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        allowed, _ = _access(update.effective_chat.id)
+        allowed, is_owner = _access(update.effective_chat.id)
         if not allowed:
             return
-        self.brain.reset(f"tg:{update.effective_chat.id}")
+        self.brain.reset(self._key(update.effective_chat.id, is_owner))
         await update.message.reply_text("Хорошо, начнём с чистого листа.")
 
     async def _cmd_mode(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -112,8 +127,8 @@ class TelegramBot:
             text = await asyncio.to_thread(_transcribe, str(ogg))
         if not text:
             await update.message.reply_text(
-                "Не смогла разобрать голосовое — для распознавания речи нужен пакет "
-                "SpeechRecognition (см. requirements.txt) и интернет. Напиши текстом?")
+                "Не смогла разобрать голосовое — для распознавания речи нужен пакет SpeechRecognition "
+                "(или faster-whisper), ffmpeg и, для режима google, интернет. Напиши текстом?")
             return
         await self._handle(update, ctx, text, chat_id, is_owner)
 
@@ -128,12 +143,12 @@ class TelegramBot:
 
     # -------------------------------------------------------------- ядро
     async def _handle(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE, text: str,
-                      chat_id: int, is_owner: bool) -> None:
+                      chat_id: int, is_owner: bool, files: Optional[list] = None) -> None:
         await ctx.bot.send_chat_action(chat_id, constants.ChatAction.TYPING)
         label = "" if is_owner else (update.effective_user.first_name or "гость")
         reply = await self.brain.generate_response(
-            key=f"tg:{chat_id}", message=text, owner_name=config.OWNER_NAME,
-            is_owner=is_owner, allow_terminal=is_owner, speaker_label=label,
+            key=self._key(chat_id, is_owner), message=text, owner_name=config.OWNER_NAME,
+            is_owner=is_owner, allow_terminal=is_owner, speaker_label=label, files=files,
         )
         if not reply:
             return
@@ -147,6 +162,75 @@ class TelegramBot:
             sent_media = await self._reply_media(update, ctx, reply, mode)
         if not sent_media or (mode != "text" and config.TELEGRAM_TEXT_WITH_MEDIA):
             await update.message.reply_text(reply)
+
+    # ------------------------------------------------------ файлы и альбомы
+    async def _download(self, ctx: ContextTypes.DEFAULT_TYPE, msg) -> tuple[Optional[tuple], str]:
+        """Скачивает вложение сообщения -> ((байты, mime, имя) | None, пометка о проблеме)."""
+        if msg.photo:
+            ph = msg.photo[-1]                       # самая большая копия фото
+            fid, mime, name, size = ph.file_id, "image/jpeg", f"фото_{ph.file_unique_id}.jpg", ph.file_size
+        elif msg.document:
+            d = msg.document
+            fid, mime, name, size = d.file_id, d.mime_type or "", d.file_name or "файл", d.file_size
+        elif msg.audio:
+            a = msg.audio
+            fid, mime, name, size = a.file_id, a.mime_type or "", a.file_name or "аудио", a.file_size
+        else:
+            return None, ""
+        if size and size > MAX_FILE_BYTES:
+            return None, f"{name}: слишком большой (максимум {MAX_FILE_BYTES // 1024 // 1024} МБ)"
+        try:
+            tg_file = await ctx.bot.get_file(fid)
+            data = bytes(await tg_file.download_as_bytearray())
+        except Exception as e:  # noqa: BLE001
+            log.info("Не удалось скачать файл из Telegram: %s", e)
+            return None, f"{name}: не удалось скачать"
+        return (data, mime, name), ""
+
+    async def _on_media(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        msg = update.message
+        chat_id = update.effective_chat.id
+        allowed, is_owner = _access(chat_id)
+        if not allowed:
+            return
+        await ctx.bot.send_chat_action(chat_id, constants.ChatAction.UPLOAD_DOCUMENT)
+        item, problem = await self._download(ctx, msg)
+        gid = msg.media_group_id
+
+        if not gid:                                  # одиночный файл — отвечаем сразу
+            text = msg.caption or ""
+            if problem:
+                text += f"\n(Не удалось приложить: {problem})"
+            await self._handle(update, ctx, text, chat_id, is_owner, files=[item] if item else [])
+            return
+
+        # альбом: Telegram присылает каждый файл отдельным сообщением — копим 1.5 секунды и отвечаем один раз
+        buf = self._albums.get(gid)
+        if buf is None:
+            buf = self._albums[gid] = {"files": [], "caption": "", "problems": []}
+            task = asyncio.create_task(self._flush_album(gid, update, ctx, chat_id, is_owner))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+        if item:
+            buf["files"].append(item)
+        if problem:
+            buf["problems"].append(problem)
+        if msg.caption:
+            buf["caption"] = msg.caption
+
+    async def _flush_album(self, gid: str, update: Update, ctx: ContextTypes.DEFAULT_TYPE,
+                           chat_id: int, is_owner: bool) -> None:
+        await asyncio.sleep(1.5)
+        buf = self._albums.pop(gid, None)
+        if not buf:
+            return
+        text = buf["caption"]
+        if buf["problems"]:
+            text += "\n(Не удалось приложить: " + "; ".join(buf["problems"]) + ")"
+        try:
+            await self._handle(update, ctx, text, chat_id, is_owner, files=buf["files"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("Не удалось ответить на альбом: %s", e)
 
     async def _reply_media(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE, text: str, mode: str) -> bool:
         chat_id = update.effective_chat.id
@@ -188,20 +272,9 @@ class TelegramBot:
 
 
 def _transcribe(ogg_path: str) -> str:
+    """Голосовое из Telegram -> текст (движок выбирается в .env: STT_ENGINE)."""
     try:
-        import speech_recognition as sr
-    except ImportError:
-        return ""
-    wav_path = ogg_path + ".wav"
-    if not media.to_wav(ogg_path, wav_path, sr=16000):
-        return ""
-    try:
-        r = sr.Recognizer()
-        with sr.AudioFile(wav_path) as src:
-            audio = r.record(src)
-        return r.recognize_google(audio, language="ru-RU")
+        return stt.transcribe_file(ogg_path)
     except Exception as e:  # noqa: BLE001
         log.info("распознавание голосового не удалось: %s", e)
         return ""
-    finally:
-        media.cleanup(wav_path)

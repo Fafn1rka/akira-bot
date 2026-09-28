@@ -25,5 +25,12 @@ if not exist .env (
 )
 
 echo.
-echo Done! Start Akira with run.bat  (or: .venv\Scripts\python main.py)
+echo Done!
+echo.
+echo Two ways to run Akira:
+echo   run.bat          - console window (text log, type to chat)
+echo   create_shortcut.bat  - creates an "Akira" icon on Desktop / Start Menu (a real window,
+echo                          chat/status/scenes/settings - no console). Run it once.
+echo Check the microphone with test_mic.bat
+echo Diagnose voice/Ollama problems with check.bat
 pause
