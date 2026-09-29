@@ -218,6 +218,7 @@ class Brain:
         self._reminder_handlers: list[Callable[[str, str], Awaitable[None]]] = []
         self._reminder_tasks: set[asyncio.Task] = set()
         self._reminders: list[tuple[float, str]] = []           # (когда сработает, текст) — для брифинга
+        self._notice_handlers: list[Callable[[str, str], Awaitable[None]]] = []   # ссылки и прочая информация
         self._screen_stash: dict[str, Attach] = {}              # key -> снимок экрана, который просит рассмотреть модель
 
         log.info("AI: %s", self.describe())
@@ -310,6 +311,34 @@ class Brain:
         """Ещё не сработавшие напоминания: [(время срабатывания, текст)] по возрастанию времени."""
         now = time.time()
         return sorted(r for r in self._reminders if r[0] > now)
+
+    # ------------------------------------------------------------- уведомления
+    def add_notice_handler(self, handler: Callable[[str, str], Awaitable[None]]) -> None:
+        """handler(key, text) — доставка того, что владелец не просил произносить вслух (ссылки,
+        результаты поиска). В отличие от напоминаний, шлётся сразу и только в текстовые каналы."""
+        self._notice_handlers.append(handler)
+
+    def notify(self, key: str, text: str) -> bool:
+        """Отправить текст владельцу прямо сейчас (например, найденную ссылку). Потокобезопасно —
+        вызывается из инструментов, которые могут работать в фоновом потоке."""
+        if not self._notice_handlers or self._loop is None or not text:
+            return False
+        loop = self._loop
+
+        async def _fire() -> None:
+            for handler in list(self._notice_handlers):
+                try:
+                    await handler(key, text)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("Обработчик уведомлений упал: %s", e)
+
+        def _start() -> None:
+            task = loop.create_task(_fire())
+            self._reminder_tasks.add(task)
+            task.add_done_callback(self._reminder_tasks.discard)
+
+        loop.call_soon_threadsafe(_start)
+        return True
 
     # ------------------------------------------------------------ экран
     def request_screenshot(self, key: str) -> str:

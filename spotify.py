@@ -97,7 +97,9 @@ def _active_device(sp) -> Optional[str]:
     return (active or devices[0])["id"]
 
 
-def play(query: str) -> str:
+def play(query: str, capture: Optional[dict] = None) -> str:
+    """capture, если передан, заполняется {"url","title","kind"} — так вызывающий код (extra_tools.py)
+    может сохранить ссылку на вкладку «Ссылки» и прислать её в Telegram/Discord."""
     if not available():
         return status()
     try:
@@ -112,6 +114,9 @@ def play(query: str) -> str:
             return (f"Нашла в Spotify «{_label(track)}», но не вижу открытого устройства — "
                     "открой приложение Spotify (на телефоне или компьютере) и попробуй снова.")
         sp.start_playback(device_id=device_id, uris=[track["uri"]])
+        if capture is not None:
+            url = (track.get("external_urls") or {}).get("spotify", "")
+            capture.update(url=url, title=_label(track), kind="музыка")
         return f"Включаю в Spotify «{_label(track)}»."
     except Exception as e:  # noqa: BLE001
         log.warning("Spotify: ошибка воспроизведения: %s", e)

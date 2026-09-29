@@ -196,3 +196,6 @@ MUSIC_YOUTUBE_FALLBACK = _bool("MUSIC_YOUTUBE_FALLBACK", True)    # искать
 SPOTIFY_CLIENT_ID = _str("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = _str("SPOTIFY_CLIENT_SECRET")
 SPOTIFY_REDIRECT_URI = _str("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
+
+# Присылать ли в Telegram/Discord ссылки, которые Акира сама находит (музыка, web_search)
+LINKS_NOTIFY = _bool("LINKS_NOTIFY", True)

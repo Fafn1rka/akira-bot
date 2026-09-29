@@ -113,6 +113,7 @@ class Akira:
         self._briefing_state = JsonStore(config.DATA_DIR / "briefing.json")   # когда здоровались в последний раз
         self._merge_owner_memory()
         self.brain.add_reminder_handler(self._on_reminder)
+        self.brain.add_notice_handler(self._on_notice)
 
     def _merge_owner_memory(self) -> None:
         """Раньше владелец в Telegram/Discord имел отдельную память. Переносим его факты в общую."""
@@ -324,33 +325,35 @@ class Akira:
     # --------------------------------------------------------- напоминания
     async def _on_reminder(self, key: str, text: str) -> None:
         """Сработало напоминание, которое владелец попросил поставить (в любом канале связи)."""
-        msg = f"Напоминание: {text}"
-        print(f"Акира: {msg}")
-        self.last_activity = time.time()
-        await voice.speak(msg)
-        if config.TELEGRAM_OWNER_ID and self.telegram_app:
-            try:
-                await self.telegram_app.bot.send_message(config.TELEGRAM_OWNER_ID, f"⏰ {msg}")
-            except Exception as e:  # noqa: BLE001
-                log.info("Не удалось отправить напоминание в Telegram: %s", e)
+        await self._tell_owner(f"Напоминание: {text}", prefix="⏰ ")
+
+    async def _on_notice(self, key: str, text: str) -> None:
+        """Ссылка или другая информация, которую Акира нашла сама (play_music, web_search) —
+        не произносится вслух, только текстом в Telegram и Discord (и видно в окне на вкладке «Ссылки»)."""
+        await self._deliver_text(text)
 
     # ------------------------------------------------- сообщение владельцу
-    async def _tell_owner(self, text: str) -> None:
-        """Сказать владельцу везде, где он может быть: голосом за компьютером, в Telegram и в Discord."""
-        print(f"Акира: {text}")
-        self.last_activity = time.time()
-        await voice.speak(text)
+    async def _deliver_text(self, text: str, prefix: str = "") -> None:
+        """Текстом — в Telegram и Discord (без голоса). Отдельно от _tell_owner, потому что
+        не каждое сообщение владельцу стоит ещё и произносить вслух (например, найденные ссылки)."""
         if config.TELEGRAM_OWNER_ID and self.telegram_app:
             try:
-                await self.telegram_app.bot.send_message(config.TELEGRAM_OWNER_ID, text)
+                await self.telegram_app.bot.send_message(config.TELEGRAM_OWNER_ID, prefix + text)
             except Exception as e:  # noqa: BLE001
                 log.info("Не удалось отправить владельцу в Telegram: %s", e)
         if config.DISCORD_BOT_TOKEN:
             try:
                 from discord_bot import dm_owner
-                await dm_owner(text)
+                await dm_owner(prefix + text)
             except Exception as e:  # noqa: BLE001
                 log.info("Не удалось отправить владельцу в Discord: %s", e)
+
+    async def _tell_owner(self, text: str, prefix: str = "") -> None:
+        """Сказать владельцу везде, где он может быть: голосом за компьютером, в Telegram и в Discord."""
+        print(f"Акира: {prefix}{text}")
+        self.last_activity = time.time()
+        await voice.speak(text)
+        await self._deliver_text(text, prefix)
 
     # ---------------------------------------------------- утренний брифинг
     async def _run_briefing(self) -> None:

@@ -9,7 +9,7 @@ if [ ! -x "$DIR/.venv/bin/python" ]; then
 fi
 chmod +x "$DIR/run_gui.sh"
 
-ICON="$DIR/assets/akira_character.png"
+ICON="$DIR/assets/akira_icon.png"
 [ -f "$ICON" ] || ICON="applications-multimedia"
 
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"

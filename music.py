@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Optional
 
 import config
+from memory import JsonStore
 
 log = logging.getLogger("akira.music")
 
@@ -55,6 +56,53 @@ class Track:
 
 
 _cache: dict[str, tuple[float, list[Track]]] = {}
+
+MAX_HISTORY = 200
+_state_store: Optional[JsonStore] = None
+
+
+def _state() -> JsonStore:
+    global _state_store
+    if _state_store is None:
+        _state_store = JsonStore(config.DATA_DIR / "music_state.json")
+    return _state_store
+
+
+def record_played(label: str, url: str = "", source: str = "") -> None:
+    """Список прослушанного (вкладка «Музыка» в окне). Новые — сверху."""
+    store = _state()
+    items = store.data.setdefault("history", [])
+    items.insert(0, {"label": label, "url": url, "source": source, "time": time.time()})
+    del items[MAX_HISTORY:]
+    store.save()
+
+
+def history(limit: int = 20) -> list[dict]:
+    return _state().data.get("history", [])[:limit]
+
+
+def add_favorite(label: str, url: str = "") -> None:
+    """Добавляет в избранное (без дублей — повторное добавление просто обновит ссылку)."""
+    store = _state()
+    favs = store.data.setdefault("favorites", [])
+    low = label.strip().lower()
+    favs[:] = [f for f in favs if f.get("label", "").strip().lower() != low]
+    favs.insert(0, {"label": label, "url": url, "time": time.time()})
+    store.save()
+
+
+def remove_favorite(label: str) -> bool:
+    store = _state()
+    favs = store.data.setdefault("favorites", [])
+    low = label.strip().lower()
+    before = len(favs)
+    favs[:] = [f for f in favs if f.get("label", "").strip().lower() != low]
+    store.save()
+    return len(favs) != before
+
+
+def list_favorites() -> list[dict]:
+    return _state().data.get("favorites", [])
 
 
 def music_dir() -> Path:
@@ -173,6 +221,7 @@ def _open_file(path: Path) -> bool:
 def play_track(track: Track) -> str:
     if not _open_file(track.path):
         return f"Нашла «{track.display}», но не смогла её открыть."
+    record_played(track.display, source="файл")
     return f"Включаю «{track.display}»."
 
 
@@ -199,7 +248,9 @@ def _youtube_search(query: str):
     return top.get("title", query), url
 
 
-def play_youtube(query: str) -> str:
+def play_youtube(query: str, capture: Optional[dict] = None) -> str:
+    """capture, если передан, заполняется {"url","title","kind"} — так вызывающий код (extra_tools.py)
+    может сохранить ссылку на вкладку «Ссылки» и прислать её в Telegram/Discord, не дублируя поиск."""
     if not (getattr(config, "MUSIC_YOUTUBE_FALLBACK", True)):
         return f"В твоей папке с музыкой нет «{query}», а поиск на YouTube выключен в настройках."
     found = _youtube_search(query)
@@ -212,11 +263,14 @@ def play_youtube(query: str) -> str:
         return f"Не нашла на YouTube ничего похожего на «{query}»."
     title, url = found
     webbrowser.open(url)
+    record_played(title, url=url, source="YouTube")
+    if capture is not None:
+        capture.update(url=url, title=title, kind="музыка")
     return f"У тебя такого нет — открываю на YouTube: «{title}»."
 
 
 # -------------------------------------------------------------- высокоуровневая команда
-def play(query: str) -> str:
+def play(query: str, capture: Optional[dict] = None) -> str:
     """«Включи <что-нибудь>»: сначала своя библиотека, если не нашлось — YouTube."""
     query = query.strip()
     if not query:
@@ -224,7 +278,7 @@ def play(query: str) -> str:
     matches = find(query, limit=1)
     if matches:
         return play_track(matches[0])
-    return play_youtube(query)
+    return play_youtube(query, capture=capture)
 
 
 def list_library(query: str = "", limit: int = 15) -> str:

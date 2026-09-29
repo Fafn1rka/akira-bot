@@ -17,7 +17,9 @@ import asyncio
 import logging
 import sys
 import threading
+import webbrowser
 from pathlib import Path
+from typing import Optional
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -25,10 +27,10 @@ sys.path.insert(0, str(HERE))
 try:
     from PySide6.QtCore import QObject, Qt, QTimer, Signal
     from PySide6.QtGui import QAction, QCloseEvent, QIcon, QPixmap
-    from PySide6.QtWidgets import (QApplication, QCheckBox, QFormLayout, QFrame, QHBoxLayout,
-                                   QLabel, QLineEdit, QListWidget, QMenu, QMessageBox, QPlainTextEdit,
-                                   QPushButton, QScrollArea, QSystemTrayIcon, QTabWidget, QTextEdit,
-                                   QVBoxLayout, QWidget)
+    from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFormLayout, QFrame,
+                                   QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
+                                   QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
+                                   QSystemTrayIcon, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 except ImportError:
     print("Для окна нужен пакет PySide6.\n  Windows:  .venv\\Scripts\\pip install PySide6\n"
          "  Linux:    .venv/bin/pip install PySide6")
@@ -37,12 +39,17 @@ except ImportError:
 import config
 import envfile
 import gui_core as gc
+import links
+import music
+import quickmenu
 import scenes
+import spotify
+import theme
 from main import Akira
 
 log = logging.getLogger("akira.gui")
 ENV_PATH = HERE / ".env"
-ICON_PATH = HERE / "assets" / "akira_character.png"
+ICON_PATH = HERE / "assets" / "akira_icon.png"
 
 
 # ============================================================ фон: сама Акира
@@ -52,6 +59,8 @@ class Bridge(QObject):
     chat_reply = Signal(str)
     chat_error = Signal(str)
     scene_result = Signal(str)
+    music_reply = Signal(str)
+    menu_status = Signal(str)
 
 
 class Backend:
@@ -96,6 +105,36 @@ class Backend:
             except Exception as e:  # noqa: BLE001
                 self.bridge.scene_result.emit(f"Ошибка: {e}")
         threading.Thread(target=go, daemon=True).start()
+
+    def play_music(self, query: str) -> None:
+        """Тот же инструмент, что вызывает голос/чат («включи ...») — файлы -> Spotify -> YouTube,
+        с той же записью в историю и ту же отправку ссылки в Telegram/Discord."""
+        def go() -> None:
+            import extra_tools
+            tools = {t.__name__: t for t in extra_tools.make_extra_tools(self.akira.brain, config.OWNER_KEY)}
+            try:
+                result = tools["play_music"](query)
+            except Exception as e:  # noqa: BLE001
+                result = f"Ошибка: {e}"
+            self.bridge.music_reply.emit(result)
+        threading.Thread(target=go, daemon=True).start()
+
+    def run_menu_item(self, item: dict) -> None:
+        action, value = item.get("action"), item.get("value", "")
+        if action == "music":
+            self.play_music(value)
+        elif action == "scene":
+            self.run_scene(value)
+        elif action == "url":
+            if value.strip().lower().startswith(("http://", "https://")):
+                webbrowser.open(value)
+                self.bridge.menu_status.emit(f"Открыла ссылку: {value}")
+            else:
+                self.bridge.menu_status.emit(f"Это не похоже на ссылку: {value}")
+        elif action == "chat":
+            self.send(value)
+        else:
+            self.bridge.menu_status.emit(f"Неизвестное действие: {action}")
 
     def stop(self) -> None:
         self.akira.request_stop()
@@ -267,6 +306,318 @@ class ScenesTab(QWidget):
         self.list.setCurrentRow(list(self._data).index(name))
 
 
+# ==================================================================== музыка
+class MusicTab(QWidget):
+    def __init__(self, backend: Backend, bridge: Bridge) -> None:
+        super().__init__()
+        self.backend = backend
+        self.search = QLineEdit(placeholderText="Песня или исполнитель...")
+        play_btn = QPushButton("Включить")
+        fav_btn = QPushButton("★ В избранное")
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+
+        self.history_list = QListWidget()
+        self.fav_list = QListWidget()
+        replay_h = QPushButton("Включить снова")
+        remove_fav = QPushButton("Убрать из избранного")
+
+        top = QHBoxLayout()
+        top.addWidget(self.search)
+        top.addWidget(play_btn)
+        top.addWidget(fav_btn)
+
+        lists = QHBoxLayout()
+        left = QVBoxLayout()
+        left.addWidget(QLabel("Недавно слушала:"))
+        left.addWidget(self.history_list)
+        left.addWidget(replay_h)
+        right = QVBoxLayout()
+        right.addWidget(QLabel("Избранное:"))
+        right.addWidget(self.fav_list)
+        right.addWidget(remove_fav)
+        left_w, right_w = QWidget(), QWidget()
+        left_w.setLayout(left)
+        right_w.setLayout(right)
+        lists.addWidget(left_w)
+        lists.addWidget(right_w)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(top)
+        layout.addWidget(self.status)
+        layout.addLayout(lists)
+
+        self.search.returnPressed.connect(self._play)
+        play_btn.clicked.connect(self._play)
+        fav_btn.clicked.connect(self._favorite)
+        replay_h.clicked.connect(lambda: self._replay(self.history_list))
+        remove_fav.clicked.connect(self._remove_favorite)
+        bridge.music_reply.connect(self._on_reply)
+
+        self._history_items: list[dict] = []
+        self._fav_items: list[dict] = []
+        self.timer = QTimer(self, interval=2000)
+        self.timer.timeout.connect(self.reload)
+        self.timer.start()
+        self.reload()
+
+    def reload(self) -> None:
+        self._history_items = music.history(30)
+        self.history_list.clear()
+        self.history_list.addItems([h["label"] for h in self._history_items])
+        self._fav_items = music.list_favorites()
+        self.fav_list.clear()
+        self.fav_list.addItems([f["label"] for f in self._fav_items])
+
+    def _play(self) -> None:
+        q = self.search.text().strip()
+        if not q:
+            return
+        self.status.setText("Ищу...")
+        self.backend.play_music(q)
+
+    def _replay(self, widget: QListWidget) -> None:
+        item = widget.currentItem()
+        if item is None:
+            return
+        label = item.text()
+        found = next((h for h in self._history_items + self._fav_items if h["label"] == label), None)
+        if found and found.get("url"):
+            webbrowser.open(found["url"])
+            self.status.setText(f"Включаю снова: {label}")
+        else:
+            self.status.setText("Ищу...")
+            self.backend.play_music(label)
+
+    def _favorite(self) -> None:
+        q = self.search.text().strip()
+        if not q:
+            return
+        music.add_favorite(q)
+        self.reload()
+        self.status.setText(f"«{q}» — в избранном.")
+
+    def _remove_favorite(self) -> None:
+        item = self.fav_list.currentItem()
+        if item is None:
+            return
+        music.remove_favorite(item.text())
+        self.reload()
+
+    def _on_reply(self, text: str) -> None:
+        self.status.setText(text)
+        self.reload()
+
+
+# ==================================================================== ссылки
+class LinksTab(QWidget):
+    KINDS = ("Все", "музыка", "инфо")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.filter_box = QComboBox()
+        self.filter_box.addItems(self.KINDS)
+        self.list = QListWidget()
+        open_btn = QPushButton("Открыть")
+        copy_btn = QPushButton("Скопировать ссылку")
+        clear_btn = QPushButton("Очистить всё")
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Показывать:"))
+        top.addWidget(self.filter_box)
+        top.addStretch(1)
+
+        row = QHBoxLayout()
+        row.addWidget(open_btn)
+        row.addWidget(copy_btn)
+        row.addWidget(clear_btn)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(top)
+        layout.addWidget(self.list)
+        layout.addLayout(row)
+
+        self.filter_box.currentTextChanged.connect(lambda _t: self.reload())
+        open_btn.clicked.connect(self._open)
+        copy_btn.clicked.connect(self._copy)
+        clear_btn.clicked.connect(self._clear)
+
+        self._items: list[dict] = []
+        self.timer = QTimer(self, interval=2000)
+        self.timer.timeout.connect(self.reload)
+        self.timer.start()
+        self.reload()
+
+    def reload(self) -> None:
+        kind = self.filter_box.currentText()
+        self._items = links.list_links(kind=None if kind == "Все" else kind, limit=100)
+        self.list.clear()
+        self.list.addItems([f"[{i['kind']}] {i['title']}" for i in self._items])
+
+    def _selected(self) -> Optional[dict]:
+        row = self.list.currentRow() if hasattr(self.list, "currentRow") else -1
+        if row is None or row < 0 or row >= len(self._items):
+            return None
+        return self._items[row]
+
+    def _open(self) -> None:
+        item = self._selected()
+        if item:
+            webbrowser.open(item["url"])
+
+    def _copy(self) -> None:
+        item = self._selected()
+        if item:
+            QApplication.clipboard().setText(item["url"])
+
+    def _clear(self) -> None:
+        if QMessageBox.question(self, "Ссылки", "Удалить все сохранённые ссылки?") == QMessageBox.StandardButton.Yes:
+            links.clear()
+            self.reload()
+
+
+# ==================================================================== меню
+class MenuTab(QWidget):
+    def __init__(self, backend: Backend, bridge: Bridge) -> None:
+        super().__init__()
+        self.backend = backend
+        self.list = QListWidget()
+        self.label_edit = QLineEdit(placeholderText="Название кнопки")
+        self.action_box = QComboBox()
+        self.action_box.addItems(list(quickmenu.ACTIONS))
+        self.value_edit = QLineEdit(placeholderText="песня / ссылка / имя сценария / фраза")
+        hint = QLabel("music — включить трек, url — открыть сайт, scene — сценарий, "
+                     "chat — отправить Акире фразу.")
+        hint.setWordWrap(True)
+
+        run_btn, save_btn, new_btn, del_btn = (QPushButton("Выполнить"), QPushButton("Сохранить"),
+                                               QPushButton("Новый пункт"), QPushButton("Удалить"))
+
+        left = QVBoxLayout()
+        left.addWidget(QLabel("Твои кнопки:"))
+        left.addWidget(self.list)
+        left.addWidget(run_btn)
+
+        form = QFormLayout()
+        form.addRow("Название:", self.label_edit)
+        form.addRow("Действие:", self.action_box)
+        form.addRow("Значение:", self.value_edit)
+        right = QVBoxLayout()
+        right.addLayout(form)
+        right.addWidget(hint)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(new_btn)
+        btn_row.addWidget(save_btn)
+        btn_row.addWidget(del_btn)
+        right.addLayout(btn_row)
+        right.addStretch(1)
+
+        top = QHBoxLayout(self)
+        left_w, right_w = QWidget(), QWidget()
+        left_w.setLayout(left)
+        right_w.setLayout(right)
+        left_w.setMaximumWidth(220)
+        top.addWidget(left_w)
+        top.addWidget(right_w)
+
+        self.list.currentRowChanged.connect(self._select)
+        run_btn.clicked.connect(self._run)
+        save_btn.clicked.connect(self._save)
+        new_btn.clicked.connect(self._new)
+        del_btn.clicked.connect(self._delete)
+        bridge.menu_status.connect(lambda t: QMessageBox.information(self, "Меню", t))
+
+        self._items: list[dict] = []
+        self.reload()
+
+    def reload(self) -> None:
+        self._items = quickmenu.list_items()
+        self.list.clear()
+        self.list.addItems([i["label"] for i in self._items])
+
+    def _select(self, row: int) -> None:
+        if 0 <= row < len(self._items):
+            item = self._items[row]
+            self.label_edit.setText(item["label"])
+            idx = list(quickmenu.ACTIONS).index(item["action"]) if item["action"] in quickmenu.ACTIONS else 0
+            self.action_box.setCurrentIndex(idx)
+            self.value_edit.setText(item["value"])
+
+    def _current_row(self) -> int:
+        return self.list.currentRow() if hasattr(self.list, "currentRow") else -1
+
+    def _run(self) -> None:
+        row = self._current_row()
+        if 0 <= row < len(self._items):
+            self.backend.run_menu_item(self._items[row])
+
+    def _save(self) -> None:
+        label, value = self.label_edit.text().strip(), self.value_edit.text().strip()
+        action = self.action_box.currentText()
+        if not label or not value:
+            QMessageBox.warning(self, "Меню", "Заполни название и значение.")
+            return
+        row = self._current_row()
+        if 0 <= row < len(self._items):
+            quickmenu.update_item(row, label, action, value)
+        else:
+            quickmenu.add_item(label, action, value)
+        self.reload()
+
+    def _new(self) -> None:
+        self.list.clearSelection() if hasattr(self.list, "clearSelection") else None
+        self.label_edit.clear()
+        self.value_edit.clear()
+        self.action_box.setCurrentIndex(0)
+
+    def _delete(self) -> None:
+        row = self._current_row()
+        if 0 <= row < len(self._items):
+            quickmenu.remove_item(row)
+            self.reload()
+            self._new()
+
+
+# ==================================================================== оформление
+class AppearanceTab(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        current = theme.load()
+        self.preset_box = QComboBox()
+        self.preset_box.addItems(list(theme.PRESETS))
+        self.preset_box.setCurrentText(current["preset"])
+        self.size_box = QComboBox()
+        self.size_box.addItems([str(s) for s in theme.FONT_SIZES])
+        self.size_box.setCurrentText(str(current["font_size"]))
+        apply_btn = QPushButton("Применить")
+        note = QLabel("Меняется сразу — Акиру перезапускать не нужно. Это только про то, как "
+                     "выглядит окно; на голос, Telegram и Discord не влияет.")
+        note.setWordWrap(True)
+
+        form = QFormLayout()
+        form.addRow("Тема:", self.preset_box)
+        form.addRow("Размер шрифта:", self.size_box)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(apply_btn)
+        layout.addWidget(note)
+        layout.addStretch(1)
+
+        apply_btn.clicked.connect(self._apply)
+
+    def _apply(self) -> None:
+        preset = self.preset_box.currentText()
+        try:
+            size = int(self.size_box.currentText())
+        except ValueError:
+            size = theme.DEFAULT_FONT_SIZE
+        theme.save(preset, size)
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(theme.stylesheet(preset, size))
+
+
 # ==================================================================== настройки
 class SettingsTab(QWidget):
     def __init__(self) -> None:
@@ -378,9 +729,13 @@ class MainWindow(QWidget):
 
         tabs = QTabWidget()
         tabs.addTab(ChatTab(backend, bridge), "Чат")
-        tabs.addTab(StatusTab(backend), "Статус")
+        tabs.addTab(MusicTab(backend, bridge), "Музыка")
+        tabs.addTab(LinksTab(), "Ссылки")
+        tabs.addTab(MenuTab(backend, bridge), "Меню")
         tabs.addTab(ScenesTab(backend, bridge), "Сценарии")
+        tabs.addTab(StatusTab(backend), "Статус")
         tabs.addTab(SettingsTab(), "Настройки")
+        tabs.addTab(AppearanceTab(), "Оформление")
         tabs.addTab(LogTab(), "Журнал")
         layout = QVBoxLayout(self)
         layout.addWidget(tabs)
@@ -431,6 +786,8 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    saved_theme = theme.load()
+    app.setStyleSheet(theme.stylesheet(saved_theme["preset"], saved_theme["font_size"]))
 
     bridge = Bridge()
     backend = Backend(bridge)

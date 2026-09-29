@@ -52,6 +52,7 @@ SETTINGS_SCHEMA: list[tuple[str, list[Field]]] = [
         Field("SPOTIFY_CLIENT_ID", "Spotify: Client ID", "secret",
               hint="developer.spotify.com/dashboard, затем один раз spotify_login.bat"),
         Field("SPOTIFY_CLIENT_SECRET", "Spotify: Client Secret", "secret"),
+        Field("LINKS_NOTIFY", "Присылать найденные ссылки в Telegram/Discord", "bool", default="true"),
     ]),
     ("Брифинг и экран", [
         Field("MORNING_BRIEFING", "Утренний брифинг", "bool", default="true"),

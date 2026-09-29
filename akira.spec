@@ -33,6 +33,6 @@ exe = EXE(
     pyz, a.scripts, a.binaries, a.datas, [],
     name="AkiraGUI",
     console=False,                       # без чёрного окна консоли — как обычная программа
-    icon=str(HERE / "assets" / "akira_character.png") if (HERE / "assets" / "akira_character.png").exists() else None,
+    icon=str(HERE / "assets" / "akira.ico") if (HERE / "assets" / "akira.ico").exists() else None,
     onefile=True,
 )

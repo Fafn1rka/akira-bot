@@ -11,7 +11,7 @@ if not exist .venv\Scripts\python.exe (
     exit /b 1
 )
 
-set "ICON=%~dp0assets\akira_character.png"
+set "ICON=%~dp0assets\akira.ico"
 if not exist "%ICON%" set "ICON=%~dp0.venv\Scripts\python.exe"
 
 > "%TEMP%\akira_shortcut.vbs" (
@@ -24,9 +24,7 @@ if not exist "%ICON%" set "ICON=%~dp0.venv\Scripts\python.exe"
     echo     link.TargetPath = "wscript.exe"
     echo     link.Arguments = """" ^& target ^& """"
     echo     link.WorkingDirectory = "%~dp0"
-    echo     If fso.GetExtensionName^(icon^) = "exe" Then
-    echo         link.IconLocation = icon
-    echo     End If
+    echo     link.IconLocation = icon
     echo     link.Description = "Акира — голосовой ИИ-компаньон"
     echo     link.Save
     echo Next

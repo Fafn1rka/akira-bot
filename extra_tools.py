@@ -15,6 +15,7 @@ from datetime import datetime
 
 import briefing
 import config
+import links
 import mediakeys
 import music
 import scenes
@@ -43,7 +44,9 @@ def make_extra_tools(brain, key: str) -> list:
 
     def web_search(query: str) -> str:
         """Ищет в интернете и возвращает несколько верхних результатов (заголовок, ссылка, описание). \
-Используй для свежих новостей, погоды, курсов и фактов, которых ты не знаешь наверняка."""
+Используй для свежих новостей, погоды, курсов, статей и фактов, которых ты не знаешь наверняка. \
+Найденные ссылки сами сохранятся на вкладке «Ссылки» и (если включено) придут владельцу в Telegram/Discord — \
+отдельно пересылать их не нужно."""
         try:
             from ddgs import DDGS
         except ImportError:
@@ -57,6 +60,13 @@ def make_extra_tools(brain, key: str) -> list:
             return f"Поиск не удался: {type(e).__name__}"
         if not results:
             return "Ничего не нашлось."
+
+        found = [(r.get("title", "") or r.get("href", ""), r.get("href", "")) for r in results[:3] if r.get("href")]
+        for title, url in found:
+            links.add_link(url, title, "инфо", source="web_search")
+        if found and config.LINKS_NOTIFY:
+            brain.notify(key, "\n\n".join(f"🔗 {t}\n{u}" for t, u in found))
+
         return "\n\n".join(
             f"{r.get('title', '')}\n{r.get('href', '')}\n{r.get('body', '')}" for r in results
         )
@@ -76,10 +86,22 @@ action: 'play_pause' (пауза/продолжить), 'pause', 'play', 'next' 
 на паузу или переключить трек дальше по очереди — используй media_control, а не эту команду."""
         local = music.find(query, limit=1)
         if local:
-            return music.play_track(local[0])
+            return music.play_track(local[0])          # уже сама пишет в историю прослушанного
+
+        capture: dict = {}
         if spotify.available():
-            return spotify.play(query)
-        return music.play_youtube(query)
+            result = spotify.play(query, capture=capture)
+            if capture.get("title"):
+                music.record_played(capture["title"], url=capture.get("url", ""), source="Spotify")
+        else:
+            result = music.play_youtube(query, capture=capture)   # сама пишет в историю (source=YouTube)
+
+        if capture.get("url"):
+            links.add_link(capture["url"], capture.get("title") or query, capture.get("kind", "музыка"),
+                           source="play_music")
+            if config.LINKS_NOTIFY:
+                brain.notify(key, f"🎵 {capture.get('title') or query}\n{capture['url']}")
+        return result
 
     play_music.slow = True  # type: ignore[attr-defined]
 
