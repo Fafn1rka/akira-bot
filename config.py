@@ -7,10 +7,17 @@ from __future__ import annotations
 import os
 import platform
 import re
+import sys
 from pathlib import Path
 from typing import List, Tuple
 
-BASE_DIR = Path(__file__).resolve().parent
+# Собранная PyInstaller-программа (.exe) распаковывает себя во временную папку — Path(__file__)
+# указывал бы туда, а не туда, где реально лежит .exe. Тогда .env, data/ и assets/ рядом с .exe
+# не находились бы. sys.frozen — стандартный признак «это собранный .exe», который ставит PyInstaller.
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent
 
 try:
     from dotenv import load_dotenv
@@ -199,3 +206,9 @@ SPOTIFY_REDIRECT_URI = _str("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8888/callb
 
 # Присылать ли в Telegram/Discord ссылки, которые Акира сама находит (музыка, web_search)
 LINKS_NOTIFY = _bool("LINKS_NOTIFY", True)
+
+# ─── Генерация картинок ────────────────────────────────────────
+# auto — сама выберет (OpenAI, если есть ключ; иначе Gemini; иначе бесплатно через Pollinations).
+IMAGE_PROVIDER = _str("IMAGE_PROVIDER", "auto")
+IMAGE_MODEL_GEMINI = _str("IMAGE_MODEL_GEMINI", "imagen-4.0-generate-001")
+IMAGE_MODEL_OPENAI = _str("IMAGE_MODEL_OPENAI", "dall-e-3")

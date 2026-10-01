@@ -54,6 +54,10 @@ SETTINGS_SCHEMA: list[tuple[str, list[Field]]] = [
         Field("SPOTIFY_CLIENT_SECRET", "Spotify: Client Secret", "secret"),
         Field("LINKS_NOTIFY", "Присылать найденные ссылки в Telegram/Discord", "bool", default="true"),
     ]),
+    ("Картинки", [
+        Field("IMAGE_PROVIDER", "Кто рисует (auto / openai / gemini / pollinations)", default="auto",
+              hint="auto — сама выберет по тому, какие ключи уже есть; pollinations работает без ключа"),
+    ]),
     ("Брифинг и экран", [
         Field("MORNING_BRIEFING", "Утренний брифинг", "bool", default="true"),
         Field("BRIEFING_TIME", "Во сколько (ЧЧ:ММ)", default="08:30"),

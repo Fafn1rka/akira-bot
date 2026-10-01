@@ -31,6 +31,7 @@ if errorlevel 1 (
 echo.
 echo Готово: dist\AkiraGUI.exe
 echo ВАЖНО: рядом с .exe нужны папка .env (твои ключи) и data\ (память Акиры) —
+echo Скопируй туда же .env (из этой папки) и, если есть, папку data\ — .exe их не содержит.
 echo        .exe их не содержит, они должны лежать в той же папке, что и .exe.
 echo Дальше можно собрать настоящий установщик: installer.iss (нужен Inno Setup, см. README).
 pause

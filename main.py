@@ -17,6 +17,7 @@ Windows и Linux — без разницы, запускается одинак�
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
 import re
@@ -114,6 +115,7 @@ class Akira:
         self._merge_owner_memory()
         self.brain.add_reminder_handler(self._on_reminder)
         self.brain.add_notice_handler(self._on_notice)
+        self.brain.add_image_handler(self._on_image)
 
     def _merge_owner_memory(self) -> None:
         """Раньше владелец в Telegram/Discord имел отдельную память. Переносим его факты в общую."""
@@ -233,10 +235,18 @@ class Akira:
         if not config.ENABLE_AVATAR:
             return
         try:
-            self.avatar_proc = subprocess.Popen(
-                [sys.executable, str(Path(__file__).parent / "avatar.py")],
-                cwd=str(Path(__file__).parent),
-            )
+            if getattr(sys, "frozen", False):
+                # Собрано в один AkiraGUI.exe (build_exe.bat): sys.executable — это сам этот .exe,
+                # а не python.exe, и отдельного файла avatar.py внутри уже нет. Флаг --avatar
+                # заставляет тот же .exe запустить только окно персонажа (см. gui.py: main()),
+                # а не всю программу заново — без него получился бы бесконечный запуск новых окон.
+                self.avatar_proc = subprocess.Popen([sys.executable, "--avatar"],
+                                                     cwd=str(config.BASE_DIR))
+            else:
+                self.avatar_proc = subprocess.Popen(
+                    [sys.executable, str(Path(__file__).parent / "avatar.py")],
+                    cwd=str(Path(__file__).parent),
+                )
             log.info("Окно персонажа запущено (PID %s).", self.avatar_proc.pid)
         except Exception as e:  # noqa: BLE001
             log.warning("Не удалось запустить окно персонажа: %s", e)
@@ -331,6 +341,28 @@ class Akira:
         """Ссылка или другая информация, которую Акира нашла сама (play_music, web_search) —
         не произносится вслух, только текстом в Telegram и Discord (и видно в окне на вкладке «Ссылки»)."""
         await self._deliver_text(text)
+
+    async def _on_image(self, key: str, data: bytes, mime: str, caption: str) -> None:
+        """Сгенерированная картинка (generate_image) — файлом в Telegram и Discord. Если ни один
+        канал не настроен, она всё равно уже лежит в data/images/ — видна на вкладке «Картинки»."""
+        sent = False
+        if config.TELEGRAM_OWNER_ID and self.telegram_app:
+            try:
+                await self.telegram_app.bot.send_photo(config.TELEGRAM_OWNER_ID, photo=io.BytesIO(data),
+                                                       caption=caption[:1024])
+                sent = True
+            except Exception as e:  # noqa: BLE001
+                log.info("Не удалось отправить картинку в Telegram: %s", e)
+        if config.DISCORD_BOT_TOKEN:
+            try:
+                from discord_bot import dm_owner_photo
+                if await dm_owner_photo(data, "akira.png", caption):
+                    sent = True
+            except Exception as e:  # noqa: BLE001
+                log.info("Не удалось отправить картинку в Discord: %s", e)
+        if not sent:
+            log.info("Картинка готова, но некуда доставить (Telegram/Discord не настроены) — "
+                     "смотри вкладку «Картинки» в окне или папку data/images/.")
 
     # ------------------------------------------------- сообщение владельцу
     async def _deliver_text(self, text: str, prefix: str = "") -> None:

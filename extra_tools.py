@@ -15,6 +15,7 @@ from datetime import datetime
 
 import briefing
 import config
+import imagegen
 import links
 import mediakeys
 import music
@@ -136,8 +137,25 @@ action: 'play_pause' (пауза/продолжить), 'pause', 'play', 'next' 
 
     morning_briefing.slow = True  # type: ignore[attr-defined]
 
+    def generate_image(prompt: str) -> str:
+        """Рисует картинку по описанию и сама отправляет её владельцу — файлом в Telegram/Discord \
+(смотря где попросили) или показывает на вкладке «Картинки» в окне. Используй, когда просят \
+нарисовать/сгенерировать/создать картинку, иллюстрацию, арт и т.п. prompt — подробное описание того, \
+что нарисовать: стиль, детали, настроение (по-английски обычно точнее, но можно и по-русски). \
+Готовую картинку в ответе описывать не нужно — просто скажи коротко, что нарисовала."""
+        path, caption = imagegen.generate(prompt)
+        if path is None:
+            return caption
+        mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+        delivered = brain.notify_image(key, path.read_bytes(), mime, caption)
+        if not delivered:
+            return f"{caption} Сохранила: {path}"
+        return caption
+
+    generate_image.slow = True  # type: ignore[attr-defined]
+
     tools += [get_current_time, set_reminder, web_search, media_control, play_music, list_music,
-              run_scene, list_scenes, morning_briefing]
+              generate_image, run_scene, list_scenes, morning_briefing]
 
     # -------------------------------------------------------------- экран
     if config.ENABLE_SCREEN_VISION:

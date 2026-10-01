@@ -39,6 +39,7 @@ except ImportError:
 import config
 import envfile
 import gui_core as gc
+import imagegen
 import links
 import music
 import quickmenu
@@ -61,6 +62,7 @@ class Bridge(QObject):
     scene_result = Signal(str)
     music_reply = Signal(str)
     menu_status = Signal(str)
+    image_reply = Signal(str)
 
 
 class Backend:
@@ -135,6 +137,19 @@ class Backend:
             self.send(value)
         else:
             self.bridge.menu_status.emit(f"Неизвестное действие: {action}")
+
+    def generate_image(self, prompt: str) -> None:
+        """Тот же инструмент, что вызывает голос/чат («нарисуй ...») — доставка в Telegram/Discord
+        (если настроены) происходит сама, тут только запускаем и ждём подпись для статуса."""
+        def go() -> None:
+            import extra_tools
+            tools = {t.__name__: t for t in extra_tools.make_extra_tools(self.akira.brain, config.OWNER_KEY)}
+            try:
+                result = tools["generate_image"](prompt)
+            except Exception as e:  # noqa: BLE001
+                result = f"Ошибка: {e}"
+            self.bridge.image_reply.emit(result)
+        threading.Thread(target=go, daemon=True).start()
 
     def stop(self) -> None:
         self.akira.request_stop()
@@ -618,6 +633,102 @@ class AppearanceTab(QWidget):
             app.setStyleSheet(theme.stylesheet(preset, size))
 
 
+# ==================================================================== картинки
+class ImagesTab(QWidget):
+    def __init__(self, backend: Backend, bridge: Bridge) -> None:
+        super().__init__()
+        self.backend = backend
+        self.prompt = QLineEdit(placeholderText="Что нарисовать...")
+        gen_btn = QPushButton("Нарисовать")
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.list = QListWidget()
+        self.preview = QLabel("Выбери картинку слева")
+        self.preview.setMinimumSize(320, 320)
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        open_btn = QPushButton("Открыть")
+        del_btn = QPushButton("Удалить")
+
+        top = QHBoxLayout()
+        top.addWidget(self.prompt)
+        top.addWidget(gen_btn)
+
+        left = QVBoxLayout()
+        left.addWidget(self.list)
+        row = QHBoxLayout()
+        row.addWidget(open_btn)
+        row.addWidget(del_btn)
+        left.addLayout(row)
+        left_w = QWidget()
+        left_w.setLayout(left)
+        left_w.setMaximumWidth(240)
+
+        body = QHBoxLayout()
+        body.addWidget(left_w)
+        body.addWidget(self.preview, 1)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(top)
+        layout.addWidget(self.status)
+        layout.addLayout(body)
+
+        self.prompt.returnPressed.connect(self._generate)
+        gen_btn.clicked.connect(self._generate)
+        self.list.currentTextChanged.connect(self._show)
+        open_btn.clicked.connect(self._open)
+        del_btn.clicked.connect(self._delete)
+        bridge.image_reply.connect(self._on_reply)
+
+        self._paths: list[Path] = []
+        self.timer = QTimer(self, interval=3000)
+        self.timer.timeout.connect(self.reload)
+        self.timer.start()
+        self.reload()
+
+    def reload(self) -> None:
+        self._paths = imagegen.list_images()
+        self.list.clear()
+        self.list.addItems([p.name for p in self._paths])
+
+    def _current_path(self) -> Optional[Path]:
+        row = self.list.currentRow() if hasattr(self.list, "currentRow") else -1
+        return self._paths[row] if 0 <= row < len(self._paths) else None
+
+    def _generate(self) -> None:
+        q = self.prompt.text().strip()
+        if not q:
+            return
+        self.status.setText("Рисую, это может занять минуту...")
+        self.backend.generate_image(q)
+
+    def _show(self, _name: str) -> None:
+        path = self._current_path()
+        if path is None:
+            return
+        pix = QPixmap(str(path))
+        self.preview.setPixmap(pix.scaled(320, 320, Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation))
+
+    def _open(self) -> None:
+        path = self._current_path()
+        if path:
+            music._open_file(path)  # тот же «открыть в программе по умолчанию», что и для музыки
+
+    def _delete(self) -> None:
+        path = self._current_path()
+        if path and QMessageBox.question(self, "Картинки", f"Удалить «{path.name}»?") \
+                == QMessageBox.StandardButton.Yes:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            self.reload()
+
+    def _on_reply(self, text: str) -> None:
+        self.status.setText(text)
+        self.reload()
+
+
 # ==================================================================== настройки
 class SettingsTab(QWidget):
     def __init__(self) -> None:
@@ -732,6 +843,7 @@ class MainWindow(QWidget):
         tabs.addTab(MusicTab(backend, bridge), "Музыка")
         tabs.addTab(LinksTab(), "Ссылки")
         tabs.addTab(MenuTab(backend, bridge), "Меню")
+        tabs.addTab(ImagesTab(backend, bridge), "Картинки")
         tabs.addTab(ScenesTab(backend, bridge), "Сценарии")
         tabs.addTab(StatusTab(backend), "Статус")
         tabs.addTab(SettingsTab(), "Настройки")
@@ -779,6 +891,13 @@ class MainWindow(QWidget):
 
 
 def main() -> None:
+    if "--avatar" in sys.argv:
+        # Внутри AkiraGUI.exe своего отдельного avatar.py как файла нет — этот же .exe с флагом
+        # --avatar запускает только окно персонажа (его отдельно вызывает main.py, см. _start_avatar).
+        import avatar
+        avatar.main()
+        return
+
     config.LOGS_DIR.mkdir(exist_ok=True)
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S",

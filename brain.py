@@ -219,6 +219,7 @@ class Brain:
         self._reminder_tasks: set[asyncio.Task] = set()
         self._reminders: list[tuple[float, str]] = []           # (когда сработает, текст) — для брифинга
         self._notice_handlers: list[Callable[[str, str], Awaitable[None]]] = []   # ссылки и прочая информация
+        self._image_handlers: list[Callable[[str, bytes, str, str], Awaitable[None]]] = []   # сгенерированные картинки
         self._screen_stash: dict[str, Attach] = {}              # key -> снимок экрана, который просит рассмотреть модель
 
         log.info("AI: %s", self.describe())
@@ -300,6 +301,33 @@ class Brain:
                     log.warning("Обработчик напоминаний упал: %s", e)
 
         def _start():
+            task = loop.create_task(_fire())
+            self._reminder_tasks.add(task)
+            task.add_done_callback(self._reminder_tasks.discard)
+
+        loop.call_soon_threadsafe(_start)
+        return True
+
+    # ---------------------------------------------------------------- картинки
+    def add_image_handler(self, handler: Callable[[str, bytes, str, str], Awaitable[None]]) -> None:
+        """handler(key, image_bytes, mime, caption) — доставка сгенерированной картинки
+        (Telegram/Discord отправляют файлом, окно — показывает на вкладке «Картинки»)."""
+        self._image_handlers.append(handler)
+
+    def notify_image(self, key: str, data: bytes, mime: str, caption: str = "") -> bool:
+        """True — есть кому доставить (хотя бы один обработчик подключён), потокобезопасно."""
+        if not self._image_handlers or self._loop is None or not data:
+            return False
+        loop = self._loop
+
+        async def _fire() -> None:
+            for handler in list(self._image_handlers):
+                try:
+                    await handler(key, data, mime, caption)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("Обработчик картинок упал: %s", e)
+
+        def _start() -> None:
             task = loop.create_task(_fire())
             self._reminder_tasks.add(task)
             task.add_done_callback(self._reminder_tasks.discard)

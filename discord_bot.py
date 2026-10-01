@@ -32,6 +32,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import time
 from typing import Optional
@@ -123,6 +124,18 @@ class AkiraDiscord(discord.Client):
 
     async def _deliver_reminder(self, key: str, text: str) -> None:
         await self.dm_owner(f"⏰ Напоминание: {text}")
+
+    async def dm_owner_photo(self, data: bytes, filename: str, caption: str = "") -> bool:
+        """Картинка владельцу в личку — файлом, а не ссылкой."""
+        if not config.DISCORD_OWNER_ID:
+            return False
+        try:
+            user = await self.fetch_user(config.DISCORD_OWNER_ID)
+            await user.send(content=(caption[:2000] or None), file=discord.File(io.BytesIO(data), filename=filename))
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.info("Не удалось отправить картинку в Discord: %s", e)
+            return False
 
     def _key(self, user_id: int, is_owner: bool) -> str:
         if is_owner and config.SHARED_OWNER_MEMORY:
@@ -318,6 +331,10 @@ _instance: Optional[AkiraDiscord] = None
 
 async def dm_owner(text: str) -> bool:
     return await _instance.dm_owner(text) if _instance is not None else False
+
+
+async def dm_owner_photo(data: bytes, filename: str, caption: str = "") -> bool:
+    return await _instance.dm_owner_photo(data, filename, caption) if _instance is not None else False
 
 
 async def run_discord(brain: Brain) -> None:
