@@ -218,6 +218,20 @@ def _open_file(path: Path) -> bool:
         return False
 
 
+def open_location(location: str) -> bool:
+    """location — веб-ссылка или путь к локальному файлу (так хранится «куда включить снова» в
+    истории/избранном — туда можно добавить и свой файл, не только то, что нашла Акира сама).
+    True — получилось открыть."""
+    location = (location or "").strip()
+    if not location:
+        return False
+    if location.startswith(("http://", "https://")):
+        import webbrowser
+        return webbrowser.open(location)
+    path = Path(location)
+    return _open_file(path) if path.is_file() else False
+
+
 def play_track(track: Track) -> str:
     if not _open_file(track.path):
         return f"Нашла «{track.display}», но не смогла её открыть."

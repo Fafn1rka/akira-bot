@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional, Union
 
 import config
+import devtools
 import memory as memory_mod
 import persona
 import providers as providers_mod
@@ -185,7 +186,20 @@ def _load_attachments(items: list) -> tuple[list[Attach], list[str], list[str], 
             mime in {"image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"}
             or mime.startswith(("audio/", "video/"))
         )
-        if binary_ok:
+        is_zip = mime in {"application/zip", "application/x-zip-compressed"} or name.lower().endswith(".zip")
+        if is_zip:
+            try:
+                import archive_tools
+                root = archive_tools.extract(data, Path(name).stem)
+                note = (f"[Архив {name} распакован в {root}. Всего файлов: "
+                        f"{sum(1 for _ in root.rglob('*') if _.is_file())}. "
+                        "Посмотри список через list_archive_files и, если нужно, прочитай файл "
+                        "через read_archive_file.]")
+                texts.append(note)
+            except Exception as e:  # noqa: BLE001  (archive_tools.ArchiveError и прочее — не роняем сообщение)
+                skipped.append(f"{name}: {e}")
+                continue
+        elif binary_ok:
             atts.append(Attach(name, mime, data))
         else:
             try:
@@ -208,7 +222,7 @@ class Brain:
     def __init__(self, mem: Optional[memory_mod.Memory] = None):
         self.memory = mem or memory_mod.Memory()
         self._history: dict[str, list[tuple[str, str]]] = {}   # key -> [("user"|"model", текст)]
-        self._pending_cmd: dict[str, str] = {}
+        self._pending_action: dict[str, dict] = {}   # {"kind": "shell", "command": ...} | {"kind": "edit", "path":..., "old":..., "new":...}
 
         self._routes = list(_ROUTES)
         self._cooldown: dict[int, float] = {}                  # индекс маршрута -> конец паузы
@@ -406,14 +420,28 @@ class Brain:
 батарея, диск."""
                 return system_control.get_system_status()
 
-            tools += [open_app, control_volume, get_system_status]
+            def propose_code_edit(path: str, old_text: str, new_text: str, reason: str) -> str:
+                """Предлагает правку в файле с кодом (своём собственном или владельца) — показывает, \
+что было и что станет, и ждёт подтверждения, НЕ меняя файл сразу. old_text — существующий фрагмент \
+файла, скопированный ТОЧНО как он есть (он должен встречаться в файле ровно один раз, иначе правка \
+не пройдёт — возьми более длинный и точный фрагмент с окружающим контекстом). new_text — чем заменить. \
+reason — короткое объяснение, зачем эта правка. Используй, когда владелец просит что-то поправить в \
+коде (включая твой собственный) или когда сама считаешь, что код можно улучшить, и предлагаешь это."""
+                err, preview = devtools.prepare_edit(path, old_text, new_text)
+                if err:
+                    return err
+                self._pending_action[key] = {"kind": "edit", "path": path, "old": old_text, "new": new_text}
+                return (f"{preview}\n\nПричина: {reason}\nСкажи «подтверждаю», и я применю, "
+                        f"или «отмена», если передумал.")
+
+            tools += [open_app, control_volume, get_system_status, propose_code_edit]
 
             if allow_terminal:
                 def propose_terminal_command(command: str, reason: str) -> str:
                     """Предлагает владельцу выполнить консольную команду на его компьютере. \
 НЕ выполняет её — только откладывает и просит подтверждения. Используй, только если владелец \
 явно попросил что-то сделать в терминале/консоли."""
-                    self._pending_cmd[key] = command
+                    self._pending_action[key] = {"kind": "shell", "command": command}
                     return (f"Хочу выполнить команду: {command} — {reason}. "
                             f"Скажи «подтверждаю», и я запущу, или «отмена», если передумал.")
 
@@ -451,7 +479,7 @@ class Brain:
 
     def reset(self, key: str) -> None:
         self._history.pop(key, None)
-        self._pending_cmd.pop(key, None)
+        self._pending_action.pop(key, None)
         self.memory.clear(key)
 
     # ------------------------------------------------------------------- API
@@ -477,15 +505,20 @@ class Brain:
             return "Давай общаться уважительно — иначе не отвечу."
 
         low = message.lower().strip(" .!")
-        if low in CONFIRM_WORDS and key in self._pending_cmd:
-            cmd = self._pending_cmd.pop(key)
-            result = await asyncio.to_thread(system_control.run_confirmed_terminal_command, cmd)
-            reply = f"Выполняю: {cmd}\n{result}"
+        if low in CONFIRM_WORDS and key in self._pending_action:
+            action = self._pending_action.pop(key)
+            if action["kind"] == "shell":
+                cmd = action["command"]
+                result = await asyncio.to_thread(system_control.run_confirmed_terminal_command, cmd)
+                reply = f"Выполняю: {cmd}\n{result}"
+            else:  # "edit"
+                result = await asyncio.to_thread(devtools.apply_edit, action["path"], action["old"], action["new"])
+                reply = result
             self.memory.add_turn(key, "user", message)
             self.memory.add_turn(key, "model", reply)
             return _scrub_secrets(reply)
-        if low in CANCEL_WORDS and key in self._pending_cmd:
-            self._pending_cmd.pop(key, None)
+        if low in CANCEL_WORDS and key in self._pending_action:
+            self._pending_action.pop(key, None)
             return "Хорошо, отменяю."
 
         if not self._routes:

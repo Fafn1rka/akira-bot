@@ -39,6 +39,33 @@ _FLAME_COLOR = {
 _GOLD = np.array([1.00, 0.80, 0.43], np.float32)
 _WARM_WHITE = np.array([1.00, 0.96, 0.84], np.float32)
 
+# Настроение (см. mood.py) красит нимб/пламя ПОВЕРХ состояния и чуть меняет темп —
+# это не отдельная анимация с нуля, а лёгкая модуляция уже существующей.
+#   tint    — к какому цвету тянуть пламя и свечение нимба (RGB, 0..1)
+#   strength— насколько сильно тянуть (0 — не менять исходный цвет состояния, 1 — красить полностью)
+#   pulse   — во сколько раз быстрее/медленнее "дышит" и пульсирует нимб (1 — как обычно)
+#   sparks  — во сколько раз больше/меньше искр пламени
+#   bloom   — доля, насколько ярче/крупнее становится свечение нимба на этом настроении
+NEUTRAL, HAPPY, SAD, EXCITED, SURPRISED, LOVING = (
+    "neutral", "happy", "sad", "excited", "surprised", "loving")
+MOODS = (NEUTRAL, HAPPY, SAD, EXCITED, SURPRISED, LOVING)
+_MOOD = {
+    NEUTRAL:   {"tint": (1.00, 0.96, 0.84), "strength": 0.00, "pulse": 1.00, "sparks": 1.00, "bloom": 0.00},
+    HAPPY:     {"tint": (1.00, 0.80, 0.25), "strength": 0.55, "pulse": 1.15, "sparks": 1.25, "bloom": 0.35},
+    EXCITED:   {"tint": (1.00, 0.45, 0.10), "strength": 0.75, "pulse": 1.60, "sparks": 1.80, "bloom": 0.70},
+    SURPRISED: {"tint": (0.55, 0.85, 1.00), "strength": 0.70, "pulse": 1.35, "sparks": 1.10, "bloom": 0.55},
+    SAD:       {"tint": (0.35, 0.45, 0.65), "strength": 0.65, "pulse": 0.55, "sparks": 0.40, "bloom": -0.35},
+    LOVING:    {"tint": (1.00, 0.40, 0.60), "strength": 0.65, "pulse": 1.10, "sparks": 1.35, "bloom": 0.40},
+}
+
+
+def _mix(base: np.ndarray, mood: str) -> tuple[np.ndarray, float, float, float]:
+    """(цвет с учётом настроения, множитель темпа, множитель числа искр, прибавка к свечению нимба)."""
+    m = _MOOD.get(mood, _MOOD[NEUTRAL])
+    k = m["strength"]
+    tint = np.array(m["tint"], np.float32)
+    return base * (1 - k) + tint * k, m["pulse"], m["sparks"], m["bloom"]
+
 Rect = Tuple[float, float, float, float]  # x0, y0, x1, y1 в координатах ассета
 
 
@@ -177,8 +204,11 @@ class CharacterRenderer:
         self._sp_star = _gauss_sprite(max(2, int(self.out_w * 0.012)), 0.5)
 
     # --------------------------------------------------------------- кадр
-    def render(self, t: float, state: str = IDLE, level: float = 0.0) -> np.ndarray:
+    def render(self, t: float, state: str = IDLE, level: float = 0.0, mood: str = NEUTRAL) -> np.ndarray:
         """
+        mood — настроение (см. MOODS выше): красит нимб/пламя и чуть меняет темп дыхания/пульса
+        поверх того, что рисует state. Не отдельный набор кадров — лёгкая модуляция тех же формул.
+
         Возвращает:
           transparent=True  -> uint8 (H, W, 4)  premultiplied RGBA
           transparent=False -> uint8 (H, W, 3)  RGB
@@ -186,10 +216,13 @@ class CharacterRenderer:
         level = float(min(1.0, max(0.0, level)))
         if state not in STATES:
             state = IDLE
+        if mood not in _MOOD:
+            mood = NEUTRAL
         h, w = self.out_h, self.out_w
         thinking = state == THINKING
         speaking = state == SPEAKING
-        breath = math.sin(t * 1.5)
+        fcol, pulse, sparks_mul, bloom_boost = _mix(np.array(_FLAME_COLOR[state], np.float32), mood)
+        breath = math.sin(t * 1.5 * pulse)
 
         if self.transparent:
             canvas = np.zeros((h, w, 4), np.float32)
@@ -200,11 +233,11 @@ class CharacterRenderer:
             self._draw_stars(canvas, t)
 
         # 1) лучи: качаются, пульсируют голосом
-        sway = 2.2 * math.sin(t * 0.45)
+        sway = 2.2 * math.sin(t * 0.45 * pulse)
         if thinking:
-            sway = 4.5 * math.sin(t * 1.7)
+            sway = 4.5 * math.sin(t * 1.7 * pulse)
         ang = sway + level * 1.6 * math.sin(t * 9.0)
-        scl = 1.0 + 0.012 * math.sin(t * 0.9) + 0.035 * level
+        scl = 1.0 + 0.012 * math.sin(t * 0.9 * pulse) + 0.035 * level
         M = cv2.getRotationMatrix2D(self.disk_c, ang, scl)
         rays_t = cv2.warpAffine(self.rays, M, (w, h), flags=cv2.INTER_LINEAR,
                                 borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
@@ -228,17 +261,17 @@ class CharacterRenderer:
         self._over(canvas, char_t)
 
         # 3) сияние нимба (bloom) — усиливается голосом
-        bloom = 0.05 + 0.025 * math.sin(t * 1.2) + 0.20 * level
-        _add_sprite(canvas, self.sp_bloom, self.disk_c[0], self.disk_c[1] + dy, _WARM_WHITE, bloom)
+        bloom = max(0.0, 0.05 + 0.025 * math.sin(t * 1.2 * pulse) + 0.20 * level + 0.30 * bloom_boost)
+        bcol, *_ = _mix(_WARM_WHITE, mood)
+        _add_sprite(canvas, self.sp_bloom, self.disk_c[0], self.disk_c[1] + dy, bcol, bloom)
 
         # 4) пламя в руках + искры
-        fcol = np.array(_FLAME_COLOR[state], np.float32)
         fx, fy = self.flame_c[0], self.flame_c[1] + dy
-        flick = 0.5 + 0.5 * math.sin(t * 7.3 + 1.7 * math.sin(t * 2.9))
+        flick = 0.5 + 0.5 * math.sin(t * 7.3 * pulse + 1.7 * math.sin(t * 2.9 * pulse))
         base = 0.24 + 0.12 * flick + (0.08 if thinking else 0.0)
         _add_sprite(canvas, self.sp_flame, fx, fy, fcol, min(0.95, base + 0.50 * level))
 
-        active = min(1.0, 0.30 + 0.70 * level + (0.25 if thinking else 0.0))
+        active = min(1.0, (0.30 + 0.70 * level + (0.25 if thinking else 0.0)) * sparks_mul)
         rise_px = self.out_w * 0.42
         spread = self.out_w * 0.05
         for i in range(self.sp_n):

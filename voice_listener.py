@@ -31,6 +31,7 @@ from typing import Optional
 import numpy as np
 
 import config
+import mic_level
 import stt
 import voice
 
@@ -111,6 +112,7 @@ class VoiceListener:
         self._last_wake_ts = 0.0
         self._noise = 100.0                       # оценка фонового шума
         self._fixed = config.VOICE_ENERGY_THRESHOLD > 0
+        self._last_level_write = 0.0
 
     def start(self) -> bool:
         if not is_available():
@@ -168,6 +170,11 @@ class VoiceListener:
             block = stream.read(BLOCK)[0][:, 0].copy()
             level = _rms(block)
             loud = level > self.threshold
+
+            now = time.monotonic()
+            if now - self._last_level_write > 0.1:   # не чаще раза в 100 мс — окно опрашивает реже
+                mic_level.write(level, self.threshold)
+                self._last_level_write = now
 
             if not speaking:
                 if not loud and not self._fixed:   # медленно подстраиваемся под шум комнаты

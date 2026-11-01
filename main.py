@@ -206,9 +206,9 @@ class Akira:
         if self.loop is not None:
             self.loop.call_soon_threadsafe(self._stop.set)
 
-    async def ask(self, text: str, speak_reply: bool = False) -> str:
+    async def ask(self, text: str, speak_reply: bool = False, files: list | None = None) -> str:
         """Задать вопрос владельца и получить ответ текстом — то, что использует gui.py для чата."""
-        return await self._handle_owner_text(text, speak_reply=speak_reply)
+        return await self._handle_owner_text(text, speak_reply=speak_reply, files=files)
 
     @staticmethod
     def _log_task_end(task: asyncio.Task) -> None:
@@ -490,14 +490,20 @@ class Akira:
         self.telegram_app = app
         await app.initialize()
         await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-        log.info("Telegram-бот запущен.")
         try:
+            await app.updater.start_polling(drop_pending_updates=True)
+            log.info("Telegram-бот запущен.")
             await self._stop.wait()
+        except Exception as e:
+            log.warning("Telegram polling остановлен: %s", e)
         finally:
-            await app.updater.stop()
-            await app.stop()
-            await app.shutdown()
+            try:
+                if app.updater and app.updater.running:
+                    await app.updater.stop()
+                await app.stop()
+                await app.shutdown()
+            except Exception as e:  # noqa: BLE001
+                log.debug("Завершение Telegram: %s", e)
 
 
 def main() -> None:

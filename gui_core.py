@@ -58,6 +58,10 @@ SETTINGS_SCHEMA: list[tuple[str, list[Field]]] = [
         Field("IMAGE_PROVIDER", "Кто рисует (auto / openai / gemini / pollinations)", default="auto",
               hint="auto — сама выберет по тому, какие ключи уже есть; pollinations работает без ключа"),
     ]),
+    ("Разработка", [
+        Field("DEV_PROJECT_DIR", "Папка проекта по умолчанию (для git)",
+              hint="Для git_status/git_log/git_diff, если не назвать путь явно"),
+    ]),
     ("Брифинг и экран", [
         Field("MORNING_BRIEFING", "Утренний брифинг", "bool", default="true"),
         Field("BRIEFING_TIME", "Во сколько (ЧЧ:ММ)", default="08:30"),

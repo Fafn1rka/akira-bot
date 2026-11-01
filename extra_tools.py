@@ -21,6 +21,9 @@ import mediakeys
 import music
 import scenes
 import spotify
+import clipboard
+import devtools
+import archive_tools
 
 log = logging.getLogger("akira.tools")
 
@@ -154,8 +157,75 @@ action: 'play_pause' (пауза/продолжить), 'pause', 'play', 'next' 
 
     generate_image.slow = True  # type: ignore[attr-defined]
 
+    def read_clipboard() -> str:
+        """Читает то, что сейчас скопировано в буфер обмена владельца на этом компьютере. \
+Используй, когда просят посмотреть/объяснить/перевести/проверить то, что он только что скопировал."""
+        return clipboard.read()
+
+    def git_status(path: str = "") -> str:
+        """Что изменилось в git-проекте: какие файлы правились, есть ли незакоммиченное. \
+path — папка проекта; если владелец не назвал путь и в .env не задан DEV_PROJECT_DIR, попроси путь."""
+        return devtools.git_status(path)
+
+    def git_log(path: str = "", limit: int = 10) -> str:
+        """Последние коммиты git-проекта (кто/когда/что). path — как в git_status."""
+        return devtools.git_log(path, limit)
+
+    def git_diff(path: str = "") -> str:
+        """Подробные незакоммиченные изменения построчно. Используй, когда просят написать \
+сообщение коммита, объяснить изменения или проверить код перед коммитом. path — как в git_status."""
+        return devtools.git_diff(path)
+
+    git_status.slow = True  # type: ignore[attr-defined]
+    git_log.slow = True  # type: ignore[attr-defined]
+    git_diff.slow = True  # type: ignore[attr-defined]
+
+    def list_running_processes(name_filter: str = "") -> str:
+        """Список запущенных на компьютере программ (имя, PID, память). name_filter — часть имени \
+процесса, например 'node' или 'python'; пусто — все процессы, от самых прожорливых по памяти. \
+Чтобы ОСТАНОВИТЬ найденный процесс — предложи это через propose_terminal_command (с подтверждением), \
+не здесь."""
+        return devtools.list_running_processes(name_filter)
+
+    def check_port(port: int) -> str:
+        """Проверяет, занят ли сетевой порт на этом компьютере и каким процессом — пригодится для \
+вопроса вроде 'ещё работает ли мой сервер на 3000'."""
+        return devtools.check_port(port)
+
+    list_running_processes.slow = True  # type: ignore[attr-defined]
+    check_port.slow = True  # type: ignore[attr-defined]
+
+    def read_log(path: str = "", lines: int = 50) -> str:
+        """Последние строки лог-файла. path пустой — собственный лог Акиры (есть ли у неё самой \
+ошибки); можно указать путь к логу другого проекта. lines — сколько строк с конца показать."""
+        return devtools.read_log(path, lines)
+
+    read_log.slow = True  # type: ignore[attr-defined]
+
+    def list_archive_files(hint: str = "") -> str:
+        """Список файлов в распакованном zip-архиве, который владелец прислал. hint — часть \
+названия архива, если их несколько; пусто — берёт последний присланный."""
+        root = archive_tools.find_root(hint)
+        if root is None:
+            return "Не нашла такого распакованного архива — пусть пришлёт его ещё раз?"
+        return archive_tools.describe(root)
+
+    def read_archive_file(path: str, hint: str = "") -> str:
+        """Читает один файл (код, текст) внутри распакованного архива. path — путь ВНУТРИ \
+архива, ровно как показан в list_archive_files. hint — какой архив, если их несколько."""
+        root = archive_tools.find_root(hint)
+        if root is None:
+            return "Не нашла такого распакованного архива — пусть пришлёт его ещё раз?"
+        return archive_tools.read_file(root, path)
+
+    list_archive_files.slow = True  # type: ignore[attr-defined]
+    read_archive_file.slow = True  # type: ignore[attr-defined]
+
     tools += [get_current_time, set_reminder, web_search, media_control, play_music, list_music,
-              generate_image, run_scene, list_scenes, morning_briefing]
+              generate_image, run_scene, list_scenes, morning_briefing,
+              read_clipboard, git_status, git_log, git_diff,
+              list_running_processes, check_port, read_log,
+              list_archive_files, read_archive_file]
 
     # -------------------------------------------------------------- экран
     if config.ENABLE_SCREEN_VISION:

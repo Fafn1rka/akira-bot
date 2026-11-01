@@ -55,6 +55,17 @@ def _save(data: bytes, prompt: str, ext: str = "png") -> Path:
     return path
 
 
+def import_file(src: Path) -> Optional[Path]:
+    """Добавляет в библиотеку картинку со своего компьютера — чтобы она была видна рядом с
+    нарисованными Акирой, в одном списке. Возвращает новый путь внутри data/images/ или None,
+    если файл не нашёлся."""
+    src = Path(src)
+    if not src.is_file():
+        return None
+    ext = src.suffix.lstrip(".").lower() or "png"
+    return _save(src.read_bytes(), src.stem, ext)
+
+
 def list_images(limit: int = 60) -> list[Path]:
     if not IMAGES_DIR.is_dir():
         return []

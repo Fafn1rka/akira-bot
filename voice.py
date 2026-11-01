@@ -224,7 +224,7 @@ async def speak(text: str, animate: bool = True) -> bool:
     mp3 = await synthesize(text)
     if not mp3:
         return await _speak_offline_windows(text)
-    anim_task = asyncio.create_task(_animate_while(mp3)) if animate and config.ENABLE_AVATAR else None
+    anim_task = asyncio.create_task(_animate_while(mp3, text)) if animate and config.ENABLE_AVATAR else None
     try:
         ok = await play_audio(mp3)
         return ok
@@ -242,12 +242,16 @@ async def speak(text: str, animate: bool = True) -> bool:
             pass
 
 
-async def _animate_while(mp3_path: Path) -> None:
-    """Пока mp3 играет, шлёт (state='speaking', level) в avatar_state — окно
-    персонажа читает это и двигает нимб/пламя в такт словам."""
+async def _animate_while(mp3_path: Path, text: str = "") -> None:
+    """Пока mp3 играет, шлёт (state='speaking', level, mood) в avatar_state — окно персонажа
+    читает это и двигает нимб/пламя в такт словам, подсвечивая цветом настроение (см. mood.py).
+    Настроение определяется один раз по тексту ДО начала озвучки, а не на каждый кадр —
+    не меняется посреди фразы и не тратит время в цикле обновления амплитуды."""
     try:
         import media
         import avatar_state
+        import mood as mood_mod
+        detected_mood = mood_mod.detect(text)
     except Exception:  # noqa: BLE001
         return
     try:
@@ -257,7 +261,7 @@ async def _animate_while(mp3_path: Path) -> None:
     fps = 20.0
     if pcm is None or len(pcm) == 0:
         # звук есть, но огибающую посчитать не смогли — просто покажем «говорит»
-        avatar_state.write_state("speaking", 0.5)
+        avatar_state.write_state("speaking", 0.5, detected_mood)
         try:
             while True:
                 await asyncio.sleep(0.2)
@@ -266,7 +270,7 @@ async def _animate_while(mp3_path: Path) -> None:
     env = media.loudness_envelope(pcm, 16000, fps)
     try:
         for lvl in env:
-            avatar_state.write_state("speaking", float(lvl))
+            avatar_state.write_state("speaking", float(lvl), detected_mood)
             await asyncio.sleep(1.0 / fps)
     except asyncio.CancelledError:
         return

@@ -20,24 +20,27 @@ _POS_PATH = config.DATA_DIR / "avatar_pos.json"
 STALE_AFTER = 1.2  # секунд: если бот перестал писать состояние — считаем, что она молчит
 
 
-def write_state(state: str, level: float = 0.0) -> None:
+def write_state(state: str, level: float = 0.0, mood: str = "neutral") -> None:
+    """mood — настроение (см. mood.py): красит нимб/пламя персонажа поверх того, что он ДЕЛАЕТ
+    (state). Указывать его нужно явно при каждом вызове — здесь нет скрытой памяти между вызовами,
+    чтобы поведение было предсказуемым и легко проверяемым."""
     try:
         tmp = _PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"state": state, "level": round(float(level), 3), "ts": time.time()}),
-                       encoding="utf-8")
+        tmp.write_text(json.dumps({"state": state, "level": round(float(level), 3), "mood": mood,
+                                   "ts": time.time()}), encoding="utf-8")
         os.replace(tmp, _PATH)
     except Exception:  # noqa: BLE001 — анимация не должна валить бота
         pass
 
 
-def read_state() -> Tuple[str, float]:
+def read_state() -> Tuple[str, float, str]:
     try:
         d = json.loads(_PATH.read_text(encoding="utf-8"))
         if time.time() - d.get("ts", 0) > STALE_AFTER:
-            return "idle", 0.0
-        return d.get("state", "idle"), float(d.get("level", 0.0))
+            return "idle", 0.0, "neutral"
+        return d.get("state", "idle"), float(d.get("level", 0.0)), d.get("mood", "neutral")
     except Exception:  # noqa: BLE001
-        return "idle", 0.0
+        return "idle", 0.0, "neutral"
 
 
 def save_position(x: int, y: int) -> None:

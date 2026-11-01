@@ -302,7 +302,39 @@ async def _openai(route: Route, system: str, history: list[tuple[str, str]],
         msg = data["choices"][0]["message"]
         calls = msg.get("tool_calls") or []
         if not calls:
-            return (msg.get("content") or "").strip()
+            # Некоторые локальные модели вместо стандартного OpenAI tool_calls
+            # печатают вызов инструмента обычным текстом:
+            # {"name":"tool_name","parameters":{...}}.
+            # Не показываем такой внутренний JSON пользователю: распознаём только
+            # реально зарегистрированные инструменты и проводим обычный цикл tool -> answer.
+            raw = (msg.get("content") or "").strip()
+            candidate_text = raw
+            if candidate_text.startswith("```"):
+                candidate_text = candidate_text.strip("`").strip()
+                if candidate_text.lower().startswith("json"):
+                    candidate_text = candidate_text[4:].strip()
+            try:
+                candidate = json.loads(candidate_text)
+            except (json.JSONDecodeError, TypeError):
+                candidate = None
+
+            if isinstance(candidate, dict):
+                tool_name = candidate.get("name") or candidate.get("tool")
+                tool_args = (candidate.get("parameters") or candidate.get("arguments")
+                             or candidate.get("args") or {})
+                if isinstance(tool_name, str) and tool_name in tools and isinstance(tool_args, dict):
+                    messages.append({"role": "assistant", "content": raw})
+                    result = await run_tool(tools, tool_name, tool_args)
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"Результат вызова инструмента {tool_name}: {result}\\n"
+                            "Теперь ответь пользователю естественным обычным текстом. "
+                            "Не показывай JSON вызова инструмента."
+                        ),
+                    })
+                    continue
+            return raw
         messages.append({"role": "assistant", "content": msg.get("content"), "tool_calls": calls})
         for c in calls:
             try:

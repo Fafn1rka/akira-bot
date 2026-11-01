@@ -212,3 +212,7 @@ LINKS_NOTIFY = _bool("LINKS_NOTIFY", True)
 IMAGE_PROVIDER = _str("IMAGE_PROVIDER", "auto")
 IMAGE_MODEL_GEMINI = _str("IMAGE_MODEL_GEMINI", "imagen-4.0-generate-001")
 IMAGE_MODEL_OPENAI = _str("IMAGE_MODEL_OPENAI", "dall-e-3")
+
+# ─── Для разработки ────────────────────────────────────────────
+# Папка твоего проекта по умолчанию для git_status/git_log/git_diff, если не назвал путь явно
+DEV_PROJECT_DIR = _str("DEV_PROJECT_DIR")

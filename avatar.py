@@ -89,10 +89,10 @@ class AvatarWindow(QLabel):
 
     # ------------------------------------------------------------ кадр
     def _tick(self) -> None:
-        state, level = avatar_state.read_state()
+        state, level, mood = avatar_state.read_state()
         self._last_state, self._last_level = state, level
         t = time.perf_counter() - self._t0
-        frame = self.renderer.render(t, state, level)  # premultiplied RGBA, uint8 (H,W,4)
+        frame = self.renderer.render(t, state, level, mood)  # premultiplied RGBA, uint8 (H,W,4)
         h, w = frame.shape[:2]
         img = QImage(frame.data, w, h, w * 4, QImage.Format.Format_RGBA8888_Premultiplied)
         self.setPixmap(QPixmap.fromImage(img.copy()))

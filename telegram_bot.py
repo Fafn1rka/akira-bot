@@ -77,6 +77,15 @@ class TelegramBot:
             (filters.PHOTO | filters.Document.ALL | filters.AUDIO) & filters.ChatType.PRIVATE, self._on_media))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
                                        self._on_text))
+
+        async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+            err = context.error
+            if err and ("Conflict" in type(err).__name__ or "Conflict" in str(err)):
+                log.warning("Telegram: обнаружен конфликт подключения (бот уже запущен в другом окне/процессе).")
+            else:
+                log.warning("Telegram ошибка: %s", err)
+
+        app.add_error_handler(_on_error)
         self.app = app
         return app
 
