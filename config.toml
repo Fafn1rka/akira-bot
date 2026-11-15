@@ -1,0 +1,14 @@
+# Ваши настройки. Здесь указывайте только то, что хотите изменить относительно config.default.toml.
+# Пример:
+#
+# [local]
+# main_model = "qwen3:8b"
+#
+# [internet]
+# default_city = "Berlin"
+#
+# [phone]
+# enabled = true
+#
+# [tools]
+# allowed_dirs = ["~/Desktop", "~/Documents", "~/Akira"]

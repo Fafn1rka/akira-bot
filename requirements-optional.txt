@@ -1,0 +1,6 @@
+# Нужны только для отдельных инструментов
+pillow>=10        # скриншоты
+psutil>=5.9       # system_info: память и батарея
+pyautogui>=0.9    # ввод текста и горячие клавиши (если allow_input_control = true)
+pyperclip>=1.8    # ввод кириллицы через буфер обмена
+qrcode>=7.4     # QR-код для телефона (manage.py phone)

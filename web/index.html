@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Акира</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;font-family:"Segoe UI",system-ui,sans-serif;color:#e8ecff}
+  body{background:radial-gradient(ellipse at 50% 30%,#1b2250 0%,#0b0e22 70%)}
+  body.transparent{background:transparent}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #status{position:fixed;top:14px;left:16px;display:flex;align-items:center;gap:8px;
+    padding:6px 12px;border-radius:999px;background:rgba(255,255,255,.08);font-size:13px;backdrop-filter:blur(6px)}
+  #dot{width:9px;height:9px;border-radius:50%;background:#6b7599;transition:background .3s}
+  #dot.listening{background:#4ade80}#dot.thinking{background:#fbbf24}#dot.speaking{background:#38d6ff}#dot.working{background:#a78bfa}
+  #sub{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);width:min(780px,92vw);text-align:center;
+    transition:opacity .6s;pointer-events:none}
+  #user{font-size:14px;opacity:.65;margin-bottom:6px;min-height:1em}
+  #akira{font-size:19px;line-height:1.4;text-shadow:0 2px 10px rgba(0,0,0,.7)}
+  #tool{font-size:13px;opacity:.7;margin-bottom:4px;min-height:1em}
+  #chat-dock{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);width:min(680px,92vw);
+    display:flex;gap:8px;background:rgba(20,26,60,.85);padding:8px 12px;border-radius:28px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.15);backdrop-filter:blur(10px);z-index:20}
+  #chat-input{flex:1;background:transparent;border:0;color:#fff;font-size:15px;padding:8px 12px;outline:none;font-family:inherit}
+  #chat-btn{border:0;background:#38d6ff;color:#06212b;border-radius:20px;padding:8px 20px;font-weight:600;font-size:14px;cursor:pointer;transition:transform .1s,background .2s}
+  #chat-btn:hover{background:#5de0ff}#chat-btn:active{transform:scale(.97)}
+  #confirm{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(420px,88vw);display:none;
+    background:rgba(20,26,60,.94);border:1px solid rgba(255,255,255,.18);border-radius:16px;padding:20px;
+    box-shadow:0 20px 60px rgba(0,0,0,.6);text-align:center}
+  #confirm p{margin:0 0 16px;font-size:16px;line-height:1.4}
+  #confirm button{font-size:15px;padding:9px 26px;border-radius:10px;border:0;margin:0 6px;cursor:pointer}
+  #yes{background:#4ade80;color:#06210f}#no{background:#475069;color:#fff}
+  #notice{position:fixed;top:56px;left:50%;transform:translateX(-50%);max-width:88vw;display:none;padding:10px 18px;
+    border-radius:12px;background:rgba(251,191,36,.18);border:1px solid rgba(251,191,36,.5);font-size:15px}
+  #err{position:fixed;inset:auto 16px 16px 16px;color:#ffb4b4;font-size:14px;display:none;
+    background:rgba(120,20,20,.35);padding:12px;border-radius:10px}
+</style>
+<script type="importmap">{{IMPORTMAP}}</script>
+<script>window.AKIRA_TOKEN="{{TOKEN}}";</script>
+<script>
+  function showErr(){var e=document.getElementById('err');e.style.display='block';
+    e.textContent='Не удалось загрузить 3D-библиотеки. Нужен интернет при первом открытии, либо запустите: python setup_avatar.py';}
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="status"><span id="dot"></span><span id="stext">подключение…</span></div>
+<div id="confirm"><p id="ctext"></p><button id="yes">Разрешить</button><button id="no">Отмена</button></div>
+<div id="sub"><div id="tool"></div><div id="user"></div><div id="akira"></div></div>
+<form id="chat-dock">
+  <input id="chat-input" placeholder="Напишите Акире..." autocomplete="off">
+  <button type="submit" id="chat-btn">Отправить</button>
+</form>
+<div id="notice"></div>
+<div id="err"></div>
+<script type="module" src="/web/avatar.js" onerror="showErr()"></script>
+</body>
+</html>

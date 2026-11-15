@@ -1,0 +1,89 @@
+# Настройки по умолчанию. НЕ редактируйте этот файл (он обновляется): свои изменения пишите в config.toml
+
+[local]
+host = "http://localhost:11434"
+main_model = "qwen3:8b"          # основной локальный мозг (~5 ГБ VRAM)
+fast_model = "qwen3:4b"          # быстрые простые ответы
+embed_model = "nomic-embed-text" # поиск по памяти
+num_ctx = 4096                   # больше контекст = больше VRAM
+agent_ctx = 8192                 # контекст в режиме действий (инструментов много); ~+1 ГБ VRAM
+
+[cloud]
+enabled = true
+provider = "gemini"               # "gemini" (бесплатно) или "anthropic" (платно)
+model = "gemini-2.0-flash"        # gemini-2.0-flash / gemini-1.5-flash / claude-sonnet-5-5
+max_tokens = 2000
+# Ключ берётся из переменной окружения GEMINI_API_KEY или ANTHROPIC_API_KEY
+
+[router]
+# Слова, после которых запрос уходит в облако (сложные задачи)
+cloud_keywords = ["код", "программ", "проанализируй", "исследуй", "подробно", "статью", "реферат", "переведи текст"]
+cloud_min_chars = 500    # длинные запросы - в облако
+fast_max_chars = 40      # совсем короткие - на быструю модель
+
+[memory]
+history_turns = 10       # сколько последних сообщений помнить в диалоге
+recall_top_k = 5         # сколько воспоминаний подмешивать
+recall_min_score = 0.55  # порог похожести
+auto_facts = false       # авто-запоминание фактов (нагружает GPU, включайте позже)
+
+[voice]
+stt_model = "small"        # tiny / base / small / medium (на CPU: small - баланс)
+language = "ru"
+wake_prompt = "Акира."     # подсказка Whisper, чтобы лучше слышать имя
+wake_window_sec = 20       # сколько секунд после ответа можно говорить без слова «Акира»
+tts_enabled = true
+tts_rate = 190
+tts_voice_hint = "Irina"   # часть имени голоса Windows (Irina / Pavel)
+mic_device = ""            # пусто = микрофон по умолчанию; номер из --devices
+debug = false              # показывать всё, что слышит микрофон
+
+[avatar]
+enabled = true
+port = 8765
+open_browser = true
+model = "assets/avatar.vrm"   # ваша VRM-модель (если файла нет - встроенный персонаж)
+three_version = "0.160.0"     # версии библиотек для CDN
+vrm_version = "3.0.0"
+
+[tools]
+enabled = true
+workspace = "~/Akira"                 # папка Акиры по умолчанию (создаётся сама)
+allowed_dirs = ["~/Desktop", "~/Documents", "~/Downloads", "~/Akira"]   # единственные папки, доступные Акире
+max_steps = 6                         # максимум шагов (вызовов инструментов) на один запрос
+confirm_timeout = 15                  # секунд на ответ «да/нет», потом отказ
+allow_input_control = false           # ввод текста и горячие клавиши (pyautogui) - выключено
+allow_shell = false                   # выполнение команд в терминале - выключено, очень опасно
+
+[tools.apps]                          # приложения, которые можно открывать/закрывать (имя = команда)
+notepad = "notepad.exe"
+calculator = "calc.exe"
+paint = "mspaint.exe"
+explorer = "explorer.exe"
+task_manager = "taskmgr.exe"
+settings = "ms-settings:"
+chrome = "chrome"
+edge = "msedge"
+
+[internet]
+enabled = true
+default_city = ""                     # город для погоды по умолчанию (пусто = Акира спросит)
+search_results = 5
+timeout = 10
+news_feeds = ["https://feeds.bbci.co.uk/russian/rss.xml", "https://rss.dw.com/xml/rss-ru-all"]
+# Поиск: без ключа используется DuckDuckGo. Для надёжности можно задать BRAVE_API_KEY (переменная окружения).
+
+[phone]
+enabled = false                       # доступ с телефона (веб-страница по токену)
+bind = "0.0.0.0"                      # 0.0.0.0 = виден в вашей Wi-Fi сети; 127.0.0.1 = только этот ПК
+port = 8766
+allow_actions = false                 # false: с телефона только интернет и навыки; true: ещё и файлы/приложения
+confirm_timeout = 60
+
+[update]
+url = ""                              # адрес manifest.json с новыми версиями (пусто = обновления выключены)
+check_on_start = false                # только проверить и сообщить; ставится вручную: manage.py update --apply
+allow_insecure = false                # разрешить http (только для тестов)
+
+[security]
+log_max_kb = 1024                     # размер журнала действий до ротации

@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  akira:
+    build: .
+    container_name: akira-companion
+    restart: unless-stopped
+    ports:
+      - "8765:8765"   # 3D веб-аватар и чат
+      - "8766:8766"   # Веб-панель для телефона
+    environment:
+      - PYTHONUNBUFFERED=1
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+    volumes:
+      - ./data:/app/data
+      - ./assets:/app/assets
+      - ./config.toml:/app/config.toml
