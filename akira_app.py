@@ -22,7 +22,15 @@ def main():
 
     from akira.app import Services, run_text, run_voice
     sv = Services(cfg, args)
-    (run_text if args.text else run_voice)(sv)
+    if args.text:
+        run_text(sv)
+    else:
+        try:
+            run_voice(sv)
+        except ImportError as e:
+            print(f"\n[!] Голосовой ввод недоступен ({e}). Переключаюсь в текстовый режим...")
+            print("[i] Для работы микрофона можно установить: pip install faster-whisper\n")
+            run_text(sv)
     print("До встречи.")
 
 
